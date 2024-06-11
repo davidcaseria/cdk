@@ -1,24 +1,25 @@
 //! Cashu Wallet
 
 use std::collections::{HashMap, HashSet};
-use std::num::ParseIntError;
+use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bitcoin::bip32::Xpriv;
+use bitcoin::bip32::ExtendedPrivKey;
 use bitcoin::hashes::sha256::Hash as Sha256Hash;
 use bitcoin::hashes::Hash;
+use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::Network;
+use error::Error;
 #[cfg(feature = "nostr")]
 use nostr_sdk::nips::nip04;
 #[cfg(feature = "nostr")]
 use nostr_sdk::{Filter, Timestamp};
-use thiserror::Error;
+use tokio::sync::RwLock;
 use tracing::instrument;
 
 use crate::amount::SplitTarget;
 use crate::cdk_database::{self, WalletDatabase};
-use crate::client::HttpClient;
 use crate::dhke::{construct_proofs, hash_to_curve};
 use crate::nuts::{
     nut10, nut12, Conditions, CurrencyUnit, Id, KeySet, KeySetInfo, Keys, Kind,
@@ -29,84 +30,17 @@ use crate::nuts::{
 use crate::types::{MeltQuote, Melted, MintQuote, ProofInfo};
 use crate::url::UncheckedUrl;
 use crate::util::{hex, unix_time};
-use crate::{Amount, Bolt11Invoice};
+use crate::{Amount, Bolt11Invoice, HttpClient};
 
-#[derive(Debug, Error)]
-pub enum Error {
-    /// Insufficient Funds
-    #[error("Insufficient Funds")]
-    InsufficientFunds,
-    #[error("Quote Expired")]
-    QuoteExpired,
-    #[error("Quote Unknown")]
-    QuoteUnknown,
-    #[error("No active keyset")]
-    NoActiveKeyset,
-    #[error(transparent)]
-    Cashu(#[from] crate::error::Error),
-    #[error("Could not verify Dleq")]
-    CouldNotVerifyDleq,
-    #[error("P2PK Condition Not met `{0}`")]
-    P2PKConditionsNotMet(String),
-    #[error("Invalid Spending Conditions: `{0}`")]
-    InvalidSpendConditions(String),
-    #[error("Preimage not provided")]
-    PreimageNotProvided,
-    #[error("Unknown Key")]
-    UnknownKey,
-    /// Spending Locktime not provided
-    #[error("Spending condition locktime not provided")]
-    LocktimeNotProvided,
-    /// Cashu Url Error
-    #[error(transparent)]
-    CashuUrl(#[from] crate::url::Error),
-    /// NUT11 Error
-    #[error(transparent)]
-    Client(#[from] crate::client::Error),
-    /// Database Error
-    #[error(transparent)]
-    Database(#[from] crate::cdk_database::Error),
-    /// NUT00 Error
-    #[error(transparent)]
-    NUT00(#[from] crate::nuts::nut00::Error),
-    /// NUT01 Error
-    #[error(transparent)]
-    NUT01(#[from] crate::nuts::nut01::Error),
-    /// NUT11 Error
-    #[error(transparent)]
-    NUT11(#[from] crate::nuts::nut11::Error),
-    /// NUT12 Error
-    #[error(transparent)]
-    NUT12(#[from] crate::nuts::nut12::Error),
-    /// Parse int
-    #[error(transparent)]
-    ParseInt(#[from] ParseIntError),
-    /// Parse invoice error
-    #[error(transparent)]
-    Invoice(#[from] lightning_invoice::ParseOrSemanticError),
-    #[error(transparent)]
-    Serde(#[from] serde_json::Error),
-    #[cfg(feature = "nostr")]
-    #[error(transparent)]
-    NostrClient(#[from] nostr_sdk::client::Error),
-    #[cfg(feature = "nostr")]
-    #[error(transparent)]
-    NostrKey(#[from] nostr_sdk::key::Error),
-    #[error("`{0}`")]
-    Custom(String),
-}
-
-impl From<Error> for cdk_database::Error {
-    fn from(e: Error) -> Self {
-        Self::Database(Box::new(e))
-    }
-}
+pub mod client;
+pub mod error;
 
 #[derive(Clone)]
 pub struct Wallet {
     pub client: HttpClient,
     pub localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync>,
-    xpriv: Xpriv,
+    xpriv: ExtendedPrivKey,
+    p2pk_signing_keys: Arc<RwLock<HashMap<XOnlyPublicKey, SecretKey>>>,
     #[cfg(feature = "nostr")]
     nostr_client: nostr_sdk::Client,
 }
@@ -115,16 +49,45 @@ impl Wallet {
     pub fn new(
         localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync>,
         seed: &[u8],
+        p2pk_signing_keys: Vec<SecretKey>,
     ) -> Self {
-        let xpriv = Xpriv::new_master(Network::Bitcoin, seed).expect("Could not create master key");
+        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, seed)
+            .expect("Could not create master key");
 
         Self {
             client: HttpClient::new(),
             localstore,
             xpriv,
+            p2pk_signing_keys: Arc::new(RwLock::new(
+                p2pk_signing_keys
+                    .into_iter()
+                    .map(|s| (s.public_key().x_only_public_key(), s))
+                    .collect(),
+            )),
             #[cfg(feature = "nostr")]
             nostr_client: nostr_sdk::Client::default(),
         }
+    }
+
+    /// Add P2PK signing key to wallet
+    #[instrument(skip_all)]
+    pub async fn add_p2pk_signing_key(&self, signing_key: SecretKey) {
+        self.p2pk_signing_keys
+            .write()
+            .await
+            .insert(signing_key.public_key().x_only_public_key(), signing_key);
+    }
+
+    /// Remove P2PK signing key from wallet
+    #[instrument(skip_all)]
+    pub async fn remove_p2pk_signing_key(&self, x_only_pubkey: &XOnlyPublicKey) {
+        self.p2pk_signing_keys.write().await.remove(x_only_pubkey);
+    }
+
+    /// P2PK keys available in wallet
+    #[instrument(skip(self))]
+    pub async fn available_p2pk_signing_keys(&self) -> HashMap<XOnlyPublicKey, SecretKey> {
+        self.p2pk_signing_keys.read().await.deref().clone()
     }
 
     /// Add nostr relays to client
@@ -416,8 +379,8 @@ impl Wallet {
                 .get_proofs(
                     Some(mint.clone()),
                     None,
-                    Some(vec![State::Unspent, State::Pending]),
-                    Some(vec![]),
+                    Some(vec![State::Pending, State::Reserved]),
+                    None,
                 )
                 .await?
             {
@@ -457,7 +420,7 @@ impl Wallet {
     /// Mint Quote
     #[instrument(skip(self), fields(mint_url = %mint_url))]
     pub async fn mint_quote(
-        &mut self,
+        &self,
         mint_url: UncheckedUrl,
         amount: Amount,
         unit: CurrencyUnit,
@@ -569,7 +532,7 @@ impl Wallet {
 
     #[instrument(skip(self), fields(mint_url = %mint_url))]
     async fn active_keys(
-        &mut self,
+        &self,
         mint_url: &UncheckedUrl,
         unit: &CurrencyUnit,
     ) -> Result<Option<Keys>, Error> {
@@ -707,7 +670,7 @@ impl Wallet {
     /// Swap
     #[instrument(skip(self, input_proofs), fields(mint_url = %mint_url))]
     pub async fn swap(
-        &mut self,
+        &self,
         mint_url: &UncheckedUrl,
         unit: &CurrencyUnit,
         amount: Option<Amount>,
@@ -731,14 +694,13 @@ impl Wallet {
             .post_swap(mint_url.clone().try_into()?, pre_swap.swap_request)
             .await?;
 
+        let active_keys = self.active_keys(mint_url, unit).await?.unwrap();
+
         let mut post_swap_proofs = construct_proofs(
             swap_response.signatures,
             pre_swap.pre_mint_secrets.rs(),
             pre_swap.pre_mint_secrets.secrets(),
-            &self
-                .active_keys(mint_url, unit)
-                .await?
-                .ok_or(Error::UnknownKey)?,
+            &active_keys,
         )?;
 
         let active_keyset_id = self.active_mint_keyset(mint_url, unit).await?;
@@ -830,7 +792,7 @@ impl Wallet {
         proofs: Proofs,
         spending_conditions: Option<SpendingConditions>,
     ) -> Result<PreSwap, Error> {
-        let active_keyset_id = self.active_mint_keyset(mint_url, unit).await?;
+        let active_keyset_id = self.active_mint_keyset(mint_url, unit).await.unwrap();
 
         // Desired amount is either amount passwed or value of all proof
         let proofs_total = proofs.iter().map(|p| p.amount).sum();
@@ -914,7 +876,7 @@ impl Wallet {
     /// Send
     #[instrument(skip(self), fields(mint_url = %mint_url))]
     pub async fn send(
-        &mut self,
+        &self,
         mint_url: &UncheckedUrl,
         unit: CurrencyUnit,
         memo: Option<String>,
@@ -1001,7 +963,7 @@ impl Wallet {
     /// Melt Quote
     #[instrument(skip(self), fields(mint_url = %mint_url))]
     pub async fn melt_quote(
-        &mut self,
+        &self,
         mint_url: UncheckedUrl,
         unit: CurrencyUnit,
         request: String,
@@ -1084,11 +1046,10 @@ impl Wallet {
                 .collect();
         }
 
-        let mint_keysets = self
-            .localstore
-            .get_mint_keysets(mint_url.clone())
-            .await?
-            .ok_or(Error::UnknownKey)?;
+        let mint_keysets = match self.localstore.get_mint_keysets(mint_url.clone()).await? {
+            Some(keysets) => keysets,
+            None => self.get_mint_keysets(&mint_url).await?,
+        };
 
         let (active, inactive): (HashSet<KeySetInfo>, HashSet<KeySetInfo>) = mint_keysets
             .into_iter()
@@ -1183,7 +1144,7 @@ impl Wallet {
     /// Melt
     #[instrument(skip(self, quote_id), fields(mint_url = %mint_url))]
     pub async fn melt(
-        &mut self,
+        &self,
         mint_url: &UncheckedUrl,
         quote_id: &str,
         amount_split_target: SplitTarget,
@@ -1298,7 +1259,6 @@ impl Wallet {
         &self,
         encoded_token: &str,
         amount_split_target: &SplitTarget,
-        signing_keys: Option<Vec<SecretKey>>,
         preimages: Option<Vec<String>>,
     ) -> Result<Amount, Error> {
         let token_data = Token::from_str(encoded_token)?;
@@ -1332,14 +1292,6 @@ impl Wallet {
 
             let mut sig_flag = SigFlag::SigInputs;
 
-            let pubkey_secret_key = match &signing_keys {
-                Some(signing_keys) => signing_keys
-                    .iter()
-                    .map(|s| (s.public_key().to_string(), s))
-                    .collect(),
-                None => HashMap::new(),
-            };
-
             // Map hash of preimage to preimage
             let hashed_to_preimage = match preimages {
                 Some(ref preimages) => preimages
@@ -1351,6 +1303,8 @@ impl Wallet {
                     .collect(),
                 None => HashMap::new(),
             };
+
+            let p2pk_signing_keys = self.p2pk_signing_keys.read().await;
 
             for proof in &mut proofs {
                 // Verify that proof DLEQ is valid
@@ -1384,7 +1338,9 @@ impl Wallet {
                             }
                         }
                         for pubkey in pubkeys {
-                            if let Some(signing) = pubkey_secret_key.get(&pubkey.to_string()) {
+                            if let Some(signing) =
+                                p2pk_signing_keys.get(&pubkey.x_only_public_key())
+                            {
                                 proof.sign_p2pk(signing.to_owned().clone())?;
                             }
                         }
@@ -1409,7 +1365,7 @@ impl Wallet {
 
             if sig_flag.eq(&SigFlag::SigAll) {
                 for blinded_message in &mut pre_swap.swap_request.outputs {
-                    for signing_key in pubkey_secret_key.values() {
+                    for signing_key in p2pk_signing_keys.values() {
                         blinded_message.sign_p2pk(signing_key.to_owned().clone())?
                     }
                 }
@@ -1454,24 +1410,34 @@ impl Wallet {
     pub async fn nostr_receive(
         &self,
         nostr_signing_key: SecretKey,
+        since: Option<u64>,
         amount_split_target: SplitTarget,
     ) -> Result<Amount, Error> {
         use nostr_sdk::{Keys, Kind};
 
         let verifying_key = nostr_signing_key.public_key();
 
-        let nostr_pubkey =
-            nostr_sdk::PublicKey::from_hex(verifying_key.x_only_public_key().to_string())?;
+        let x_only_pubkey = verifying_key.x_only_public_key();
 
-        let filter = match self
-            .localstore
-            .get_nostr_last_checked(&verifying_key)
-            .await?
-        {
+        let nostr_pubkey = nostr_sdk::PublicKey::from_hex(x_only_pubkey.to_string())?;
+
+        let keys = Keys::from_str(&(nostr_signing_key).to_secret_hex())?;
+        self.add_p2pk_signing_key(nostr_signing_key).await;
+
+        let since = match since {
+            Some(since) => Some(Timestamp::from(since)),
+            None => self
+                .localstore
+                .get_nostr_last_checked(&verifying_key)
+                .await?
+                .map(|s| Timestamp::from(s as u64)),
+        };
+
+        let filter = match since {
             Some(since) => Filter::new()
                 .pubkey(nostr_pubkey)
                 .kind(Kind::EncryptedDirectMessage)
-                .since(Timestamp::from(since as u64)),
+                .since(since),
             None => Filter::new()
                 .pubkey(nostr_pubkey)
                 .kind(Kind::EncryptedDirectMessage),
@@ -1481,7 +1447,6 @@ impl Wallet {
 
         let events = self.nostr_client.get_events_of(vec![filter], None).await?;
 
-        let keys = Keys::from_str(&nostr_signing_key.to_secret_hex()).unwrap();
         let mut tokens: HashSet<String> = HashSet::new();
 
         for event in events {
@@ -1500,15 +1465,7 @@ impl Wallet {
 
         let mut total_received = Amount::ZERO;
         for token in tokens.iter() {
-            match self
-                .receive(
-                    token,
-                    &amount_split_target,
-                    Some(vec![nostr_signing_key.clone()]),
-                    None,
-                )
-                .await
-            {
+            match self.receive(token, &amount_split_target, None).await {
                 Ok(amount) => total_received += amount,
                 Err(err) => {
                     tracing::error!("Could not receive token: {}", err);
@@ -1548,7 +1505,7 @@ impl Wallet {
     }
 
     #[instrument(skip(self), fields(mint_url = %mint_url))]
-    pub async fn restore(&mut self, mint_url: UncheckedUrl) -> Result<Amount, Error> {
+    pub async fn restore(&self, mint_url: UncheckedUrl) -> Result<Amount, Error> {
         // Check that mint is in store of mints
         if self.localstore.get_mint(mint_url.clone()).await?.is_none() {
             self.add_mint(mint_url.clone()).await?;

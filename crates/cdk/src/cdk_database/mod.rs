@@ -14,9 +14,9 @@ use crate::nuts::State;
 #[cfg(feature = "mint")]
 use crate::nuts::{BlindSignature, Proof};
 #[cfg(any(feature = "wallet", feature = "mint"))]
-use crate::nuts::{CurrencyUnit, Id, MintInfo, PublicKey};
+use crate::nuts::{CurrencyUnit, Id, PublicKey};
 #[cfg(feature = "wallet")]
-use crate::nuts::{KeySetInfo, Keys, Proofs, SpendingConditions};
+use crate::nuts::{KeySetInfo, Keys, MintInfo, Proofs, SpendingConditions};
 #[cfg(feature = "mint")]
 use crate::secret::Secret;
 #[cfg(feature = "wallet")]
@@ -30,6 +30,9 @@ use crate::url::UncheckedUrl;
 pub mod mint_memory;
 #[cfg(feature = "wallet")]
 pub mod wallet_memory;
+
+#[cfg(feature = "wallet")]
+pub use wallet_memory::WalletMemoryDatabase;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -64,6 +67,8 @@ pub trait WalletDatabase {
         &self,
         mint_url: UncheckedUrl,
     ) -> Result<Option<Vec<KeySetInfo>>, Self::Err>;
+    async fn get_keyset_by_id(&self, keyset_id: &Id) -> Result<Option<KeySetInfo>, Self::Err>;
+
     async fn add_mint_quote(&self, quote: MintQuote) -> Result<(), Self::Err>;
     async fn get_mint_quote(&self, quote_id: &str) -> Result<Option<MintQuote>, Self::Err>;
     async fn get_mint_quotes(&self) -> Result<Vec<MintQuote>, Self::Err>;
@@ -109,9 +114,6 @@ pub trait WalletDatabase {
 #[async_trait]
 pub trait MintDatabase {
     type Err: Into<Error> + From<Error>;
-
-    async fn set_mint_info(&self, mint_info: &MintInfo) -> Result<(), Self::Err>;
-    async fn get_mint_info(&self) -> Result<MintInfo, Self::Err>;
 
     async fn add_active_keyset(&self, unit: CurrencyUnit, id: Id) -> Result<(), Self::Err>;
     async fn get_active_keyset_id(&self, unit: &CurrencyUnit) -> Result<Option<Id>, Self::Err>;

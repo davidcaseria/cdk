@@ -14,11 +14,11 @@ use crate::nuts::{
 use crate::types::{MeltQuote, MintQuote, ProofInfo};
 use crate::url::UncheckedUrl;
 
-// TODO: Change these all to RwLocks
 #[derive(Default, Debug, Clone)]
 pub struct WalletMemoryDatabase {
     mints: Arc<RwLock<HashMap<UncheckedUrl, Option<MintInfo>>>>,
-    mint_keysets: Arc<RwLock<HashMap<UncheckedUrl, HashSet<KeySetInfo>>>>,
+    mint_keysets: Arc<RwLock<HashMap<UncheckedUrl, HashSet<Id>>>>,
+    keysets: Arc<RwLock<HashMap<Id, KeySetInfo>>>,
     mint_quotes: Arc<RwLock<HashMap<String, MintQuote>>>,
     melt_quotes: Arc<RwLock<HashMap<String, MeltQuote>>>,
     mint_keys: Arc<RwLock<HashMap<Id, Keys>>>,
@@ -39,6 +39,7 @@ impl WalletMemoryDatabase {
         Self {
             mints: Arc::new(RwLock::new(HashMap::new())),
             mint_keysets: Arc::new(RwLock::new(HashMap::new())),
+            keysets: Arc::new(RwLock::new(HashMap::new())),
             mint_quotes: Arc::new(RwLock::new(
                 mint_quotes.into_iter().map(|q| (q.id.clone(), q)).collect(),
             )),
@@ -83,10 +84,19 @@ impl WalletDatabase for WalletMemoryDatabase {
         mint_url: UncheckedUrl,
         keysets: Vec<KeySetInfo>,
     ) -> Result<(), Error> {
-        let mut current_keysets = self.mint_keysets.write().await;
+        let mut current_mint_keysets = self.mint_keysets.write().await;
+        let mut current_keysets = self.keysets.write().await;
 
-        let mint_keysets = current_keysets.entry(mint_url).or_insert(HashSet::new());
-        mint_keysets.extend(keysets);
+        for keyset in keysets {
+            current_mint_keysets
+                .entry(mint_url.clone())
+                .and_modify(|ks| {
+                    ks.insert(keyset.id);
+                })
+                .or_insert(HashSet::from_iter(vec![keyset.id]));
+
+            current_keysets.insert(keyset.id, keyset);
+        }
 
         Ok(())
     }
@@ -95,12 +105,26 @@ impl WalletDatabase for WalletMemoryDatabase {
         &self,
         mint_url: UncheckedUrl,
     ) -> Result<Option<Vec<KeySetInfo>>, Error> {
-        Ok(self
-            .mint_keysets
-            .read()
-            .await
-            .get(&mint_url)
-            .map(|ks| ks.iter().cloned().collect()))
+        match self.mint_keysets.read().await.get(&mint_url) {
+            Some(keyset_ids) => {
+                let mut keysets = vec![];
+
+                let db_keysets = self.keysets.read().await;
+
+                for id in keyset_ids {
+                    if let Some(keyset) = db_keysets.get(id) {
+                        keysets.push(keyset.clone());
+                    }
+                }
+
+                Ok(Some(keysets))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn get_keyset_by_id(&self, keyset_id: &Id) -> Result<Option<KeySetInfo>, Error> {
+        Ok(self.keysets.read().await.get(keyset_id).cloned())
     }
 
     async fn add_mint_quote(&self, quote: MintQuote) -> Result<(), Error> {
@@ -209,7 +233,8 @@ impl WalletDatabase for WalletMemoryDatabase {
     async fn set_proof_state(&self, y: PublicKey, state: State) -> Result<(), Self::Err> {
         let mint_proofs = self.proofs.read().await;
 
-        let mint_proof = mint_proofs.get(&y);
+        let mint_proof = mint_proofs.get(&y).cloned();
+        drop(mint_proofs);
 
         let mut mint_proofs = self.proofs.write().await;
 
@@ -225,7 +250,9 @@ impl WalletDatabase for WalletMemoryDatabase {
 
     async fn increment_keyset_counter(&self, keyset_id: &Id, count: u32) -> Result<(), Error> {
         let keyset_counter = self.keyset_counter.read().await;
-        let current_counter = keyset_counter.get(keyset_id).unwrap_or(&0);
+        let current_counter = keyset_counter.get(keyset_id).cloned().unwrap_or(0);
+        drop(keyset_counter);
+
         self.keyset_counter
             .write()
             .await

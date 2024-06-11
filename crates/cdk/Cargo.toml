@@ -15,16 +15,13 @@ mint = []
 wallet = ["dep:reqwest"]
 nostr = ["dep:nostr-sdk"]
 
+
 [dependencies]
-async-trait = "0.1"
-base64 = "0.22" # bitcoin uses v0.13 (optional dep)
+async-trait.workspace = true
+base64 = "0.22"                                                          # bitcoin uses v0.13 (optional dep)
 bip39 = "2.0"
-bitcoin = { version = "0.31", features = [
-    "serde",
-    "rand",
-    "rand-std",
-] } # lightning-invoice uses v0.30
 http = "1.0"
+bitcoin = { workspace = true, features = ["serde", "rand", "rand-std"] }
 # lightning-invoice = { version = "0.31", features = ["serde"] }
 lightning-invoice = { git = "https://github.com/jirijakes/rust-lightning.git", branch = "upgrade-bitcoin-031", features = [
     "serde",
@@ -62,3 +59,14 @@ tokio = { workspace = true, features = [
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 getrandom = { version = "0.2", features = ["js"] }
 instant = { version = "0.1", features = ["wasm-bindgen", "inaccurate"] }
+
+[[example]]
+name = "mint-token"
+required-features = ["wallet"]
+
+[[example]]
+name = "p2pk"
+required-features = ["wallet"]
+
+[dev-dependencies]
+rand = "0.8.5"
