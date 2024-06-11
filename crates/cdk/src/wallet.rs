@@ -5,7 +5,7 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bitcoin::bip32::ExtendedPrivKey;
+use bitcoin::bip32::Xpriv;
 use bitcoin::hashes::sha256::Hash as Sha256Hash;
 use bitcoin::hashes::Hash;
 use bitcoin::Network;
@@ -106,7 +106,7 @@ impl From<Error> for cdk_database::Error {
 pub struct Wallet {
     pub client: HttpClient,
     pub localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync>,
-    xpriv: ExtendedPrivKey,
+    xpriv: Xpriv,
     #[cfg(feature = "nostr")]
     nostr_client: nostr_sdk::Client,
 }
@@ -116,8 +116,7 @@ impl Wallet {
         localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync>,
         seed: &[u8],
     ) -> Self {
-        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, seed)
-            .expect("Could not create master key");
+        let xpriv = Xpriv::new_master(Network::Bitcoin, seed).expect("Could not create master key");
 
         Self {
             client: HttpClient::new(),

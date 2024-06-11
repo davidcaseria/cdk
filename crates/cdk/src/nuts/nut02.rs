@@ -9,7 +9,7 @@ use std::array::TryFromSliceError;
 use std::collections::BTreeMap;
 
 #[cfg(feature = "mint")]
-use bitcoin::bip32::{ChildNumber, ExtendedPrivKey};
+use bitcoin::bip32::{ChildNumber, Xpriv};
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::Hash;
 #[cfg(feature = "mint")]
@@ -274,7 +274,7 @@ pub struct MintKeySet {
 impl MintKeySet {
     pub fn generate<C: secp256k1::Signing>(
         secp: &Secp256k1<C>,
-        xpriv: ExtendedPrivKey,
+        xpriv: Xpriv,
         unit: CurrencyUnit,
         max_order: u8,
     ) -> Self {
@@ -311,8 +311,7 @@ impl MintKeySet {
         seed: &[u8],
         info: MintKeySetInfo,
     ) -> Self {
-        let xpriv =
-            ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, seed).expect("RNG busted");
+        let xpriv = Xpriv::new_master(bitcoin::Network::Bitcoin, seed).expect("RNG busted");
         let max_order = info.max_order;
         let unit = info.unit;
         Self::generate(secp, xpriv, unit, max_order)
@@ -320,7 +319,7 @@ impl MintKeySet {
 
     pub fn generate_from_xpriv<C: secp256k1::Signing>(
         secp: &Secp256k1<C>,
-        xpriv: ExtendedPrivKey,
+        xpriv: Xpriv,
         info: MintKeySetInfo,
     ) -> Self {
         let max_order = info.max_order;
