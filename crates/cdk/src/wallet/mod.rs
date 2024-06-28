@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bitcoin::bip32::ExtendedPrivKey;
+use bitcoin::bip32::Xpriv;
 use bitcoin::hashes::sha256::Hash as Sha256Hash;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::XOnlyPublicKey;
@@ -38,7 +38,7 @@ pub mod util;
 pub struct Wallet {
     pub client: HttpClient,
     pub localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync>,
-    xpriv: ExtendedPrivKey,
+    xpriv: Xpriv,
     p2pk_signing_keys: Arc<RwLock<HashMap<XOnlyPublicKey, SecretKey>>>,
     #[cfg(feature = "nostr")]
     nostr_client: nostr_sdk::Client,
@@ -50,8 +50,7 @@ impl Wallet {
         seed: &[u8],
         p2pk_signing_keys: Vec<SecretKey>,
     ) -> Self {
-        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, seed)
-            .expect("Could not create master key");
+        let xpriv = Xpriv::new_master(Network::Bitcoin, seed).expect("Could not create master key");
 
         Self {
             client: HttpClient::new(),

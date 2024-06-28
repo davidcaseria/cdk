@@ -2,7 +2,7 @@
 //!
 //! <https://github.com/cashubtc/nuts/blob/main/13.md>
 
-use bitcoin::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
+use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
 
 use super::nut00::{BlindedMessage, PreMint, PreMintSecrets};
 use super::nut01::SecretKey;
@@ -15,7 +15,7 @@ use crate::util::hex;
 use crate::{Amount, SECP256K1};
 
 impl Secret {
-    pub fn from_xpriv(xpriv: ExtendedPrivKey, keyset_id: Id, counter: u32) -> Result<Self, Error> {
+    pub fn from_xpriv(xpriv: Xpriv, keyset_id: Id, counter: u32) -> Result<Self, Error> {
         let path = derive_path_from_keyset_id(keyset_id)?
             .child(ChildNumber::from_hardened_idx(counter)?)
             .child(ChildNumber::from_normal_idx(0)?);
@@ -28,7 +28,7 @@ impl Secret {
 }
 
 impl SecretKey {
-    pub fn from_xpriv(xpriv: ExtendedPrivKey, keyset_id: Id, counter: u32) -> Result<Self, Error> {
+    pub fn from_xpriv(xpriv: Xpriv, keyset_id: Id, counter: u32) -> Result<Self, Error> {
         let path = derive_path_from_keyset_id(keyset_id)?
             .child(ChildNumber::from_hardened_idx(counter)?)
             .child(ChildNumber::from_normal_idx(1)?);
@@ -44,7 +44,7 @@ impl PreMintSecrets {
     pub fn from_xpriv(
         keyset_id: Id,
         counter: u32,
-        xpriv: ExtendedPrivKey,
+        xpriv: Xpriv,
         amount: Amount,
         amount_split_target: &SplitTarget,
     ) -> Result<Self, Error> {
@@ -77,7 +77,7 @@ impl PreMintSecrets {
     pub fn from_xpriv_blank(
         keyset_id: Id,
         counter: u32,
-        xpriv: ExtendedPrivKey,
+        xpriv: Xpriv,
         amount: Amount,
     ) -> Result<Self, Error> {
         if amount <= Amount::ZERO {
@@ -116,7 +116,7 @@ impl PreMintSecrets {
     /// factor
     pub fn restore_batch(
         keyset_id: Id,
-        xpriv: ExtendedPrivKey,
+        xpriv: Xpriv,
         start_count: u32,
         end_count: u32,
     ) -> Result<Self, Error> {
@@ -169,7 +169,7 @@ mod tests {
             "half depart obvious quality work element tank gorilla view sugar picture humble";
         let mnemonic = Mnemonic::from_str(seed).unwrap();
         let seed: [u8; 64] = mnemonic.to_seed("");
-        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &seed).unwrap();
+        let xpriv = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
         let keyset_id = Id::from_str("009a1f293253e41e").unwrap();
 
         let test_secrets = [
@@ -191,7 +191,7 @@ mod tests {
             "half depart obvious quality work element tank gorilla view sugar picture humble";
         let mnemonic = Mnemonic::from_str(seed).unwrap();
         let seed: [u8; 64] = mnemonic.to_seed("");
-        let xpriv = ExtendedPrivKey::new_master(Network::Bitcoin, &seed).unwrap();
+        let xpriv = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
         let keyset_id = Id::from_str("009a1f293253e41e").unwrap();
 
         let test_rs = [
