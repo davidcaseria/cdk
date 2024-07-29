@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cdk::cdk_database::WalletDatabase;
 use cdk::nuts::{
-    CurrencyUnit, Id, KeySetInfo, Keys, MintInfo, Proofs, PublicKey, SpendingConditions, State,
+    CurrencyUnit, Id, KeySetInfo, Keys, MintInfo, PublicKey, SpendingConditions, State,
 };
 use cdk::types::ProofInfo;
 use cdk::url::UncheckedUrl;
@@ -242,7 +242,7 @@ impl WalletDatabase for WalletRedbDatabase {
                 .collect();
 
             if !updated_proofs.is_empty() {
-                self.add_proofs(updated_proofs).await?;
+                self.update_proofs(updated_proofs, vec![]).await?;
             }
         }
 
@@ -548,30 +548,30 @@ impl WalletDatabase for WalletRedbDatabase {
         Ok(())
     }
 
-    #[instrument(skip(self, proofs_info))]
-    async fn add_proofs(&self, proofs_info: Vec<ProofInfo>) -> Result<(), Self::Err> {
-        let db = self.db.lock().await;
+    // #[instrument(skip(self, proofs_info))]
+    // async fn add_proofs(&self, proofs_info: Vec<ProofInfo>) -> Result<(), Self::Err> {
+    //     let db = self.db.lock().await;
 
-        let write_txn = db.begin_write().map_err(Error::from)?;
+    //     let write_txn = db.begin_write().map_err(Error::from)?;
 
-        {
-            let mut table = write_txn.open_table(PROOFS_TABLE).map_err(Error::from)?;
+    //     {
+    //         let mut table = write_txn.open_table(PROOFS_TABLE).map_err(Error::from)?;
 
-            for proof_info in proofs_info.iter() {
-                table
-                    .insert(
-                        proof_info.y.to_bytes().as_slice(),
-                        serde_json::to_string(&proof_info)
-                            .map_err(Error::from)?
-                            .as_str(),
-                    )
-                    .map_err(Error::from)?;
-            }
-        }
-        write_txn.commit().map_err(Error::from)?;
+    //         for proof_info in proofs_info.iter() {
+    //             table
+    //                 .insert(
+    //                     proof_info.y.to_bytes().as_slice(),
+    //                     serde_json::to_string(&proof_info)
+    //                         .map_err(Error::from)?
+    //                         .as_str(),
+    //                 )
+    //                 .map_err(Error::from)?;
+    //         }
+    //     }
+    //     write_txn.commit().map_err(Error::from)?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[instrument(skip_all)]
     async fn get_proofs(
@@ -612,8 +612,31 @@ impl WalletDatabase for WalletRedbDatabase {
         Ok(proofs)
     }
 
-    #[instrument(skip(self, proofs))]
-    async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Self::Err> {
+    // #[instrument(skip(self, proofs))]
+    // async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Self::Err> {
+    //     let db = self.db.lock().await;
+
+    //     let write_txn = db.begin_write().map_err(Error::from)?;
+
+    //     {
+    //         let mut table = write_txn.open_table(PROOFS_TABLE).map_err(Error::from)?;
+
+    //         for proof in proofs {
+    //             let y_slice = proof.y().map_err(Error::from)?.to_bytes();
+    //             table.remove(y_slice.as_slice()).map_err(Error::from)?;
+    //         }
+    //     }
+    //     write_txn.commit().map_err(Error::from)?;
+
+    //     Ok(())
+    // }
+
+    #[instrument(skip(self, added, removed))]
+    async fn update_proofs(
+        &self,
+        added: Vec<ProofInfo>,
+        removed: Vec<ProofInfo>,
+    ) -> Result<(), Self::Err> {
         let db = self.db.lock().await;
 
         let write_txn = db.begin_write().map_err(Error::from)?;
@@ -621,9 +644,19 @@ impl WalletDatabase for WalletRedbDatabase {
         {
             let mut table = write_txn.open_table(PROOFS_TABLE).map_err(Error::from)?;
 
-            for proof in proofs {
-                let y_slice = proof.y().map_err(Error::from)?.to_bytes();
-                table.remove(y_slice.as_slice()).map_err(Error::from)?;
+            for proof in added {
+                table
+                    .insert(
+                        proof.y.to_bytes().as_slice(),
+                        serde_json::to_string(&proof).map_err(Error::from)?.as_str(),
+                    )
+                    .map_err(Error::from)?;
+            }
+
+            for proof in removed {
+                table
+                    .remove(proof.y.to_bytes().as_slice())
+                    .map_err(Error::from)?;
             }
         }
         write_txn.commit().map_err(Error::from)?;

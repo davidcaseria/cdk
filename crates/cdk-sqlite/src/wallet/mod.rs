@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use cdk::amount::Amount;
 use cdk::cdk_database::{self, WalletDatabase};
 use cdk::nuts::{
-    CurrencyUnit, Id, KeySetInfo, Keys, MeltQuoteState, MintInfo, MintQuoteState, Proof, Proofs,
-    PublicKey, SpendingConditions, State,
+    CurrencyUnit, Id, KeySetInfo, Keys, MeltQuoteState, MintInfo, MintQuoteState, Proof, PublicKey,
+    SpendingConditions, State,
 };
 use cdk::secret::Secret;
 use cdk::types::ProofInfo;
@@ -495,43 +495,6 @@ WHERE id=?
         Ok(())
     }
 
-    #[instrument(skip_all)]
-    async fn add_proofs(&self, proof_info: Vec<ProofInfo>) -> Result<(), Self::Err> {
-        for proof in proof_info {
-            sqlx::query(
-                r#"
-INSERT OR REPLACE INTO proof
-(y, mint_url, state, spending_condition, unit, amount, keyset_id, secret, c, witness)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        "#,
-            )
-            .bind(proof.y.to_bytes().to_vec())
-            .bind(proof.mint_url.to_string())
-            .bind(proof.state.to_string())
-            .bind(
-                proof
-                    .spending_condition
-                    .map(|s| serde_json::to_string(&s).ok()),
-            )
-            .bind(proof.unit.to_string())
-            .bind(u64::from(proof.proof.amount) as i64)
-            .bind(proof.proof.keyset_id.to_string())
-            .bind(proof.proof.secret.to_string())
-            .bind(proof.proof.c.to_bytes().to_vec())
-            .bind(
-                proof
-                    .proof
-                    .witness
-                    .map(|w| serde_json::to_string(&w).unwrap()),
-            )
-            .execute(&self.pool)
-            .await
-            .map_err(Error::from)?;
-        }
-
-        Ok(())
-    }
-
     #[instrument(skip(self, state, spending_conditions))]
     async fn get_proofs(
         &self,
@@ -585,16 +548,52 @@ FROM proof;
     }
 
     #[instrument(skip_all)]
-    async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Self::Err> {
-        // TODO: Generate a IN clause
-        for proof in proofs {
+    async fn update_proofs(
+        &self,
+        added: Vec<ProofInfo>,
+        removed: Vec<ProofInfo>,
+    ) -> Result<(), Self::Err> {
+        for proof in added {
             sqlx::query(
                 r#"
-DELETE FROM proof
-WHERE y = ?
-        "#,
+    INSERT OR REPLACE INTO proof
+    (y, mint_url, state, spending_condition, unit, amount, keyset_id, secret, c, witness)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            "#,
             )
-            .bind(proof.y()?.to_bytes().to_vec())
+            .bind(proof.y.to_bytes().to_vec())
+            .bind(proof.mint_url.to_string())
+            .bind(proof.state.to_string())
+            .bind(
+                proof
+                    .spending_condition
+                    .map(|s| serde_json::to_string(&s).ok()),
+            )
+            .bind(proof.unit.to_string())
+            .bind(u64::from(proof.proof.amount) as i64)
+            .bind(proof.proof.keyset_id.to_string())
+            .bind(proof.proof.secret.to_string())
+            .bind(proof.proof.c.to_bytes().to_vec())
+            .bind(
+                proof
+                    .proof
+                    .witness
+                    .map(|w| serde_json::to_string(&w).unwrap()),
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(Error::from)?;
+        }
+
+        // TODO: Generate a IN clause
+        for proof in removed {
+            sqlx::query(
+                r#"
+    DELETE FROM proof
+    WHERE y = ?
+            "#,
+            )
+            .bind(proof.proof.y()?.to_bytes().to_vec())
             .execute(&self.pool)
             .await
             .map_err(Error::from)?;

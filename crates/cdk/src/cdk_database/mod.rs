@@ -33,6 +33,8 @@ use crate::wallet::MintQuote as WalletMintQuote;
 pub mod mint_memory;
 #[cfg(feature = "wallet")]
 pub mod wallet_memory;
+#[cfg(feature = "nostr")]
+pub mod wallet_nostr;
 
 #[cfg(feature = "wallet")]
 pub use wallet_memory::WalletMemoryDatabase;
@@ -118,8 +120,6 @@ pub trait WalletDatabase: Debug {
     /// Remove [`Keys`] from storage
     async fn remove_keys(&self, id: &Id) -> Result<(), Self::Err>;
 
-    /// Add [`Proofs`] to storage
-    async fn add_proofs(&self, proof_info: Vec<ProofInfo>) -> Result<(), Self::Err>;
     /// Get proofs from storage
     async fn get_proofs(
         &self,
@@ -128,8 +128,12 @@ pub trait WalletDatabase: Debug {
         state: Option<Vec<State>>,
         spending_conditions: Option<Vec<SpendingConditions>>,
     ) -> Result<Vec<ProofInfo>, Self::Err>;
-    /// Remove proofs from storage
-    async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Self::Err>;
+    /// Update [`Proofs`] in storage
+    async fn update_proofs(
+        &self,
+        added: Vec<ProofInfo>,
+        removed: Vec<ProofInfo>,
+    ) -> Result<(), Self::Err>;
 
     /// Set Proof state
     async fn set_proof_state(&self, y: PublicKey, state: State) -> Result<(), Self::Err>;

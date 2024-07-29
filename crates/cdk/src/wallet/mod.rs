@@ -430,7 +430,7 @@ impl Wallet {
         let amount = pending_proofs.iter().map(|p| p.proof.amount).sum();
 
         self.localstore
-            .remove_proofs(&non_pending_proofs.into_iter().map(|p| p.proof).collect())
+            .update_proofs(vec![], non_pending_proofs)
             .await?;
 
         balance += amount;
@@ -617,7 +617,7 @@ impl Wallet {
             .collect();
 
         // Add new proofs to store
-        self.localstore.add_proofs(proofs).await?;
+        self.localstore.update_proofs(proofs, vec![]).await?;
 
         Ok(minted_amount)
     }
@@ -893,15 +893,15 @@ impl Wallet {
                     );
                 }
 
-                let send_proofs_info = proofs_to_send
-                    .clone()
-                    .into_iter()
-                    .flat_map(|proof| {
-                        ProofInfo::new(proof, mint_url.clone(), State::Reserved, *unit)
-                    })
-                    .collect();
+                // let send_proofs_info = proofs_to_send
+                //     .clone()
+                //     .into_iter()
+                //     .flat_map(|proof| {
+                //         ProofInfo::new(proof, mint_url.clone(), State::Reserved, *unit)
+                //     })
+                //     .collect();
 
-                self.localstore.add_proofs(send_proofs_info).await?;
+                // self.localstore.add_proofs(send_proofs_info).await?;
 
                 change_proofs = proofs_to_keep;
                 send_proofs = Some(proofs_to_send);
@@ -912,16 +912,30 @@ impl Wallet {
             }
         }
 
+        let mut added_proofs = send_proofs
+            .as_ref()
+            .map(|proofs| {
+                proofs
+                    .iter()
+                    .cloned()
+                    .flat_map(|p| ProofInfo::new(p, mint_url.clone(), State::Unspent, *unit))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let keep_proofs = change_proofs
             .into_iter()
             .flat_map(|proof| ProofInfo::new(proof, mint_url.clone(), State::Unspent, *unit))
+            .collect::<Vec<_>>();
+        added_proofs.extend(keep_proofs);
+
+        let removed_proofs = input_proofs
+            .clone()
+            .into_iter()
+            .flat_map(|proof| ProofInfo::new(proof, mint_url.clone(), State::Spent, *unit))
             .collect();
-
-        self.localstore.add_proofs(keep_proofs).await?;
-
-        // Remove spent proofs used as inputs
-        self.localstore.remove_proofs(&input_proofs).await?;
-
+        self.localstore
+            .update_proofs(added_proofs, removed_proofs)
+            .await?;
         Ok(send_proofs)
     }
 
@@ -1315,12 +1329,31 @@ impl Wallet {
                 })
                 .collect();
 
-            self.localstore.add_proofs(change_proofs_info).await?;
+            self.localstore
+                .update_proofs(
+                    change_proofs_info,
+                    proofs
+                        .into_iter()
+                        .flat_map(|p| {
+                            ProofInfo::new(p, self.mint_url.clone(), State::Spent, quote_info.unit)
+                        })
+                        .collect(),
+                )
+                .await?;
+        } else {
+            self.localstore
+                .update_proofs(
+                    vec![],
+                    proofs
+                        .into_iter()
+                        .flat_map(|p| {
+                            ProofInfo::new(p, self.mint_url.clone(), State::Spent, quote_info.unit)
+                        })
+                        .collect(),
+                )
+                .await?;
         }
-
         self.localstore.remove_melt_quote(&quote_info.id).await?;
-
-        self.localstore.remove_proofs(&proofs).await?;
 
         Ok(melted)
     }
@@ -1593,7 +1626,7 @@ impl Wallet {
                 .into_iter()
                 .flat_map(|proof| ProofInfo::new(proof, mint.clone(), State::Unspent, self.unit))
                 .collect();
-            self.localstore.add_proofs(proofs).await?;
+            self.localstore.update_proofs(proofs, vec![]).await?;
         }
 
         Ok(total_amount)
@@ -1734,7 +1767,9 @@ impl Wallet {
                     })
                     .collect();
 
-                self.localstore.add_proofs(unspent_proofs).await?;
+                self.localstore
+                    .update_proofs(unspent_proofs, vec![])
+                    .await?;
 
                 empty_batch = 0;
                 start_counter += 100;

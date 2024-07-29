@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use super::WalletDatabase;
 use crate::cdk_database::Error;
 use crate::nuts::{
-    CurrencyUnit, Id, KeySetInfo, Keys, MintInfo, Proofs, PublicKey, SpendingConditions, State,
+    CurrencyUnit, Id, KeySetInfo, Keys, MintInfo, PublicKey, SpendingConditions, State,
 };
 use crate::types::ProofInfo;
 use crate::url::UncheckedUrl;
@@ -109,7 +109,7 @@ impl WalletDatabase for WalletMemoryDatabase {
                 })
                 .collect();
 
-            self.add_proofs(updated_proofs).await?;
+            self.update_proofs(updated_proofs, vec![]).await?;
         }
 
         // Update mint quotes
@@ -241,11 +241,29 @@ impl WalletDatabase for WalletMemoryDatabase {
         Ok(())
     }
 
-    async fn add_proofs(&self, proofs_info: Vec<ProofInfo>) -> Result<(), Error> {
+    // async fn add_proofs(&self, proofs_info: Vec<ProofInfo>) -> Result<(), Error> {
+    //     let mut all_proofs = self.proofs.write().await;
+
+    //     for proof_info in proofs_info.into_iter() {
+    //         all_proofs.insert(proof_info.y, proof_info);
+    //     }
+
+    //     Ok(())
+    // }
+
+    async fn update_proofs(
+        &self,
+        added: Vec<ProofInfo>,
+        removed: Vec<ProofInfo>,
+    ) -> Result<(), Error> {
         let mut all_proofs = self.proofs.write().await;
 
-        for proof_info in proofs_info.into_iter() {
+        for proof_info in added.into_iter() {
             all_proofs.insert(proof_info.y, proof_info);
+        }
+
+        for proof_info in removed.into_iter() {
+            all_proofs.remove(&proof_info.y);
         }
 
         Ok(())
@@ -275,15 +293,15 @@ impl WalletDatabase for WalletMemoryDatabase {
         Ok(proofs)
     }
 
-    async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Error> {
-        let mut mint_proofs = self.proofs.write().await;
+    // async fn remove_proofs(&self, proofs: &Proofs) -> Result<(), Error> {
+    //     let mut mint_proofs = self.proofs.write().await;
 
-        for proof in proofs {
-            mint_proofs.remove(&proof.y().map_err(Error::from)?);
-        }
+    //     for proof in proofs {
+    //         mint_proofs.remove(&proof.y().map_err(Error::from)?);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     async fn set_proof_state(&self, y: PublicKey, state: State) -> Result<(), Self::Err> {
         let mint_proofs = self.proofs.read().await;
