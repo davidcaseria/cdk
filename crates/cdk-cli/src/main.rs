@@ -6,11 +6,13 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use bip39::Mnemonic;
 use cdk::cdk_database;
+use cdk::cdk_database::wallet_nostr::WalletNostrDatabase;
 use cdk::cdk_database::WalletDatabase;
 use cdk::wallet::{MultiMintWallet, Wallet};
 use cdk_redb::WalletRedbDatabase;
 use cdk_sqlite::WalletSqliteDatabase;
 use clap::{Parser, Subcommand};
+use nostr_sdk::{Keys, SecretKey, Url};
 use rand::Rng;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -26,9 +28,15 @@ const DEFAULT_WORK_DIR: &str = ".cdk-cli";
 #[command(version = "0.1.0")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Database engine to use (sqlite/redb)
+    /// Database engine to use (sqlite/redb/nostr)
     #[arg(short, long, default_value = "sqlite")]
     engine: String,
+    /// Nostr secret key
+    #[arg(short, long)]
+    nsec: Option<SecretKey>,
+    /// Nostr relay url
+    #[arg(short, long)]
+    relay: Option<Url>,
     /// Path to working dir
     #[arg(short, long)]
     work_dir: Option<PathBuf>,
@@ -89,23 +97,37 @@ async fn main() -> Result<()> {
 
     fs::create_dir_all(&work_dir)?;
 
-    let localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync> =
-        match args.engine.as_str() {
-            "sqlite" => {
-                let sql_path = work_dir.join("cdk-cli.sqlite");
-                let sql = WalletSqliteDatabase::new(&sql_path).await?;
+    let localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync> = match args
+        .engine
+        .as_str()
+    {
+        "sqlite" => {
+            let sql_path = work_dir.join("cdk-cli.sqlite");
+            let sql = WalletSqliteDatabase::new(&sql_path).await?;
 
-                sql.migrate().await;
+            sql.migrate().await;
 
-                Arc::new(sql)
-            }
-            "redb" => {
-                let redb_path = work_dir.join("cdk-cli.redb");
+            Arc::new(sql)
+        }
+        "redb" => {
+            let redb_path = work_dir.join("cdk-cli.redb");
 
-                Arc::new(WalletRedbDatabase::new(&redb_path)?)
-            }
-            _ => bail!("Unknown DB engine"),
-        };
+            Arc::new(WalletRedbDatabase::new(&redb_path)?)
+        }
+        "nostr" => {
+            let nsec = args
+                .nsec
+                .ok_or_else(|| anyhow::anyhow!("No Nostr secret key provided"))?;
+
+            let relay = args
+                .relay
+                .ok_or_else(|| anyhow::anyhow!("No Nostr relay url provided"))?;
+
+            let keys = Keys::new(nsec);
+            Arc::new(WalletNostrDatabase::remote("cdk-cli".to_string(), keys, vec![relay]).await?)
+        }
+        _ => bail!("Unknown DB engine"),
+    };
 
     let seed_path = work_dir.join("seed");
 
