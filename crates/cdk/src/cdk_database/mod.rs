@@ -15,9 +15,9 @@ use crate::mint::MintKeySetInfo;
 #[cfg(feature = "mint")]
 use crate::mint::MintQuote as MintMintQuote;
 #[cfg(feature = "mint")]
-use crate::nuts::{BlindSignature, MeltQuoteState, MintQuoteState, Proof};
+use crate::nuts::{BlindSignature, MeltQuoteState, MintQuoteState, Proof, Proofs};
 #[cfg(any(feature = "wallet", feature = "mint"))]
-use crate::nuts::{CurrencyUnit, Id, Proofs, PublicKey, State};
+use crate::nuts::{CurrencyUnit, Id, PublicKey, State};
 #[cfg(feature = "wallet")]
 use crate::nuts::{KeySetInfo, Keys, MintInfo, SpendingConditions};
 #[cfg(feature = "wallet")]

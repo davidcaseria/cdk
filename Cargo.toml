@@ -1,15 +1,12 @@
 [workspace]
-members = [
-    "bindings/cdk-js",
-    "crates/*",
-]
+members = ["bindings/cdk-js", "crates/*"]
 resolver = "2"
 
 [workspace.package]
 license = "MIT"
 homepage = "https://github.com/cashubtc/cdk"
 repository = "https://github.com/cashubtc/cdk.git"
-rust-version = "1.70.0" # MSRV
+rust-version = "1.70.0"                            # MSRV
 
 [workspace.metadata]
 authors = ["CDK Developers"]
@@ -36,20 +33,25 @@ cdk-fake-wallet = { version = "0.1", path = "./crates/cdk-fake-wallet", default-
 cdk-strike = { version = "0.1", path = "./crates/cdk-strike", default-features = false }
 tokio = { version = "1", default-features = false }
 thiserror = "1"
-tracing = { version = "0.1", default-features = false, features = ["attributes", "log"] }
+tracing = { version = "0.1", default-features = false, features = [
+    "attributes",
+    "log",
+] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = "1"
 serde-wasm-bindgen = "0.6.5"
 futures = { version = "0.3.28", default-feature = false }
-web-sys =  { version = "0.3.69", default-features = false, features = ["console"] }
+web-sys = { version = "0.3.69", default-features = false, features = [
+    "console",
+] }
 uuid = { version = "1", features = ["v4"] }
 lightning-invoice = { version = "0.31", features = ["serde"] }
 home = "0.5.9"
-nostr-sdk = { version = "0.32.0", default-features = false, features = [
+nostr-sdk = { version = "0.33.0", default-features = false, features = [
     "nip04",
-    "nip44"
-]}
+    "nip44",
+] }
 
 [profile]
 

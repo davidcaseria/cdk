@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
     sync::Arc,
+    time::Duration,
     vec,
 };
 
@@ -79,6 +80,7 @@ impl WalletNostrDatabase {
     ) -> Result<Self, Error> {
         let client = Client::new(&keys);
         client.add_relays(relays).await?;
+        client.connect().await;
         Ok(Self::new(client, keys, id, None))
     }
 
@@ -94,6 +96,7 @@ impl WalletNostrDatabase {
     {
         let client = Client::new(&keys);
         client.add_relays(relays).await?;
+        client.connect().await;
         Ok(Self::new(client, keys, id, Some(Arc::new(Box::new(db)))))
     }
 
@@ -128,14 +131,30 @@ impl WalletNostrDatabase {
             ..Default::default()
         }];
         let events = self.get_events(filters).await?;
-        let event = latest_event(events).ok_or(Error::NotFound)?;
-        WalletInfo::from_event(&event, &self.keys)
+        match latest_event(events) {
+            Some(event) => WalletInfo::from_event(&event, &self.keys),
+            None => {
+                let info = WalletInfo {
+                    id: self.id.clone(),
+                    balance: None,
+                    mints: HashSet::new(),
+                    name: None,
+                    unit: None,
+                    description: None,
+                    relays: HashSet::new(),
+                    p2pk_priv_key: None,
+                    counters: HashMap::new(),
+                };
+                self.save_wallet_info(info.clone()).await?;
+                Ok(info)
+            }
+        }
     }
 
     /// Save wallet info
     pub async fn save_wallet_info(&self, info: WalletInfo) -> Result<EventId, Error> {
         let event = info.to_event(&self.keys)?;
-        Ok(self.client.send_event(event).await?)
+        Ok(self.client.send_event(event).await?.val)
     }
 
     async fn get_events(&self, filters: Vec<Filter>) -> Result<Vec<Event>, Error> {
@@ -147,9 +166,14 @@ impl WalletNostrDatabase {
                 .client
                 .subscribe(
                     filters,
-                    Some(SubscribeAutoCloseOptions::default().filter(FilterOptions::ExitOnEOSE)),
+                    Some(
+                        SubscribeAutoCloseOptions::default()
+                            .filter(FilterOptions::ExitOnEOSE)
+                            .timeout(Some(Duration::from_secs(10))),
+                    ),
                 )
-                .await;
+                .await?
+                .val;
             let mut events = Vec::new();
             let mut relay_urls: HashSet<Url> = self.client.relays().await.keys().cloned().collect();
             loop {
@@ -528,6 +552,7 @@ fn map_err(e: Error) -> super::Error {
 }
 
 /// Wallet info
+#[derive(Clone, Debug)]
 pub struct WalletInfo {
     /// Wallet id
     pub id: String,
