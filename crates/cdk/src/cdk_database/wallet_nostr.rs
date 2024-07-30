@@ -14,7 +14,7 @@ use nostr_database::DatabaseError;
 use nostr_sdk::{
     client, nips::nip44, Client, Event, EventBuilder, EventId, Filter, FilterOptions, Kind,
     NostrDatabase, RelayMessage, RelayPoolNotification, SecretKey, SingleLetterTag,
-    SubscribeAutoCloseOptions, Tag, TagKind,
+    SubscribeAutoCloseOptions, Tag, TagKind, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -46,6 +46,7 @@ const RELAY_TAG: &str = "relay";
 const BALANCE_TAG: &str = "balance";
 const PRIVKEY_TAG: &str = "privkey";
 const COUNTER_TAG: &str = "counter";
+const QUOTE_TYPE_TAG: &str = "quote_type";
 const QUOTE_ID_TAG: &str = "quote_id";
 const AMOUNT_TAG: &str = "amount";
 const REQUEST_TAG: &str = "request";
@@ -53,6 +54,9 @@ const STATE_TAG: &str = "state";
 const FEE_RESERVE: &str = "fee_reserve";
 const PREIMAGE_TAG: &str = "preimage";
 const EXPIRATION_TAG: &str = "expiration";
+
+const MINT_QUOTE_TYPE: &str = "mint";
+const MELT_QUOTE_TYPE: &str = "melt";
 
 /// Wallet on Nostr
 #[derive(Clone, Debug)]
@@ -65,6 +69,7 @@ pub struct WalletNostrDatabase {
     db: Option<Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>>,
 
     // In-memory storage
+    mint_infos: Arc<RwLock<HashMap<UncheckedUrl, MintInfo>>>,
     mint_keysets: Arc<RwLock<HashMap<UncheckedUrl, HashSet<Id>>>>,
     keysets: Arc<RwLock<HashMap<Id, KeySetInfo>>>,
     mint_keys: Arc<RwLock<HashMap<Id, Keys>>>,
@@ -111,6 +116,7 @@ impl WalletNostrDatabase {
             keys,
             id,
             db,
+            mint_infos: Arc::new(RwLock::new(HashMap::new())),
             mint_keysets: Arc::new(RwLock::new(HashMap::new())),
             keysets: Arc::new(RwLock::new(HashMap::new())),
             mint_keys: Arc::new(RwLock::new(HashMap::new())),
@@ -121,6 +127,7 @@ impl WalletNostrDatabase {
     /// Get wallet info
     pub async fn get_wallet_info(&self) -> Result<WalletInfo, Error> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![WALLET_INFO_KIND].into_iter().collect()),
             generic_tags: vec![(
                 SingleLetterTag::from_char(ID_TAG).expect("ID_TAG is not a single letter tag"),
@@ -139,7 +146,7 @@ impl WalletNostrDatabase {
                     balance: None,
                     mints: HashSet::new(),
                     name: None,
-                    unit: None,
+                    unit: Some(CurrencyUnit::Sat),
                     description: None,
                     relays: HashSet::new(),
                     p2pk_priv_key: None,
@@ -155,6 +162,12 @@ impl WalletNostrDatabase {
     pub async fn save_wallet_info(&self, info: WalletInfo) -> Result<EventId, Error> {
         let event = info.to_event(&self.keys)?;
         Ok(self.client.send_event(event).await?.val)
+    }
+
+    async fn save_mint_url(&self, mint_url: &UncheckedUrl) {
+        if !self.mint_infos.read().await.contains_key(mint_url) {
+            let _ = self.add_mint(mint_url.clone(), None).await;
+        }
     }
 
     async fn get_events(&self, filters: Vec<Filter>) -> Result<Vec<Event>, Error> {
@@ -238,11 +251,17 @@ impl WalletDatabase for WalletNostrDatabase {
     async fn add_mint(
         &self,
         mint_url: UncheckedUrl,
-        _mint_info: Option<MintInfo>,
+        mint_info: Option<MintInfo>,
     ) -> Result<(), Self::Err> {
         let mut info = self.get_wallet_info().await.map_err(map_err)?;
-        info.mints.insert(mint_url);
+        info.mints.insert(mint_url.clone());
         self.save_wallet_info(info).await.map_err(map_err)?;
+        if let Some(mint_info) = mint_info {
+            self.mint_infos
+                .write()
+                .await
+                .insert(mint_url, mint_info.clone());
+        }
         Ok(())
     }
 
@@ -250,11 +269,12 @@ impl WalletDatabase for WalletNostrDatabase {
         let mut info = self.get_wallet_info().await.map_err(map_err)?;
         info.mints.retain(|url| url != &mint_url);
         self.save_wallet_info(info).await.map_err(map_err)?;
+        self.mint_infos.write().await.remove(&mint_url);
         Ok(())
     }
 
-    async fn get_mint(&self, _mint_url: UncheckedUrl) -> Result<Option<MintInfo>, Self::Err> {
-        Ok(None)
+    async fn get_mint(&self, mint_url: UncheckedUrl) -> Result<Option<MintInfo>, Self::Err> {
+        Ok(self.mint_infos.read().await.get(&mint_url).cloned())
     }
 
     async fn get_mints(&self) -> Result<HashMap<UncheckedUrl, Option<MintInfo>>, Self::Err> {
@@ -283,6 +303,7 @@ impl WalletDatabase for WalletNostrDatabase {
         mint_url: UncheckedUrl,
         keysets: Vec<KeySetInfo>,
     ) -> Result<(), Self::Err> {
+        self.save_mint_url(&mint_url).await;
         let mut current_mint_keysets = self.mint_keysets.write().await;
         let mut current_keysets = self.keysets.write().await;
 
@@ -327,6 +348,7 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn add_mint_quote(&self, quote: MintQuote) -> Result<(), Self::Err> {
+        self.save_mint_url(&quote.mint_url).await;
         let event = mint_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
             db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
@@ -345,37 +367,40 @@ impl WalletDatabase for WalletNostrDatabase {
 
     async fn get_mint_quotes(&self) -> Result<Vec<MintQuote>, Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![QUOTE_KIND].into_iter().collect()),
             ..Default::default()
         }];
         let events = unique_events(self.get_events(filters).await.map_err(map_err)?);
         let quotes = events
             .iter()
-            .map(|event| mint_quote_from_event(event, &self.keys))
-            .collect::<Result<Vec<MintQuote>, Error>>()
-            .map_err(map_err)?;
+            .flat_map(|event| mint_quote_from_event(event, &self.keys).ok().flatten())
+            .collect();
         Ok(quotes)
     }
 
     async fn remove_mint_quote(&self, quote_id: &str) -> Result<(), Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![QUOTE_KIND].into_iter().collect()),
             ..Default::default()
         }];
         let events = self.get_events(filters).await.map_err(map_err)?;
         for event in events {
-            let quote = mint_quote_from_event(&event, &self.keys).map_err(map_err)?;
-            if quote.id == quote_id {
-                self.client
-                    .delete_event(event.id())
-                    .await
-                    .map_err(|e| map_err(e.into()))?;
+            if let Some(quote) = mint_quote_from_event(&event, &self.keys).map_err(map_err)? {
+                if quote.id == quote_id {
+                    self.client
+                        .delete_event(event.id())
+                        .await
+                        .map_err(|e| map_err(e.into()))?;
+                }
             }
         }
         Ok(())
     }
 
     async fn add_melt_quote(&self, quote: MeltQuote) -> Result<(), Self::Err> {
+        // self.save_mint_url(&quote.mint_url).await;
         let event = melt_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
             db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
@@ -389,31 +414,33 @@ impl WalletDatabase for WalletNostrDatabase {
 
     async fn get_melt_quote(&self, quote_id: &str) -> Result<Option<MeltQuote>, Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![QUOTE_KIND].into_iter().collect()),
             ..Default::default()
         }];
         let events = unique_events(self.get_events(filters).await.map_err(map_err)?);
         let quotes = events
             .iter()
-            .map(|event| melt_quote_from_event(event, &self.keys))
-            .collect::<Result<Vec<MeltQuote>, Error>>()
-            .map_err(map_err)?;
+            .flat_map(|event| melt_quote_from_event(event, &self.keys).ok().flatten())
+            .collect::<Vec<_>>();
         Ok(quotes.into_iter().find(|quote| quote.id == quote_id))
     }
 
     async fn remove_melt_quote(&self, quote_id: &str) -> Result<(), Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![QUOTE_KIND].into_iter().collect()),
             ..Default::default()
         }];
         let events = self.get_events(filters).await.map_err(map_err)?;
         for event in events {
-            let quote = melt_quote_from_event(&event, &self.keys).map_err(map_err)?;
-            if quote.id == quote_id {
-                self.client
-                    .delete_event(event.id())
-                    .await
-                    .map_err(|e| map_err(e.into()))?;
+            if let Some(quote) = melt_quote_from_event(&event, &self.keys).map_err(map_err)? {
+                if quote.id == quote_id {
+                    self.client
+                        .delete_event(event.id())
+                        .await
+                        .map_err(|e| map_err(e.into()))?;
+                }
             }
         }
         Ok(())
@@ -441,11 +468,14 @@ impl WalletDatabase for WalletNostrDatabase {
         spending_conditions: Option<Vec<SpendingConditions>>,
     ) -> Result<Vec<ProofInfo>, Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![TX_KIND].into_iter().collect()),
             generic_tags: vec![(
                 SingleLetterTag::from_char(ID_LINK_TAG)
                     .expect("ID_LINK_TAG is not a single letter tag"),
-                vec![self.id.clone()].into_iter().collect(),
+                vec![wallet_link_tag_value(&self.id, &self.keys)]
+                    .into_iter()
+                    .collect(),
             )]
             .into_iter()
             .collect(),
@@ -458,6 +488,7 @@ impl WalletDatabase for WalletNostrDatabase {
             .collect::<Result<Vec<TxInfo>, Error>>()
             .map_err(map_err)?;
         let wallet_proofs = WalletProofs::from(txs);
+        println!("Wallet proofs: {:?}", wallet_proofs);
 
         let mut proofs = Vec::new();
         for (wallet_mint_url, mint_proofs) in wallet_proofs.proofs {
@@ -469,11 +500,13 @@ impl WalletDatabase for WalletNostrDatabase {
                     .get(&proof.y()?)
                     .cloned()
                     .unwrap_or(State::Unspent);
-                if let Some(proof_unit) = self
+                let wallet_unit = self.get_wallet_info().await.map_err(map_err)?.unit;
+                let proof_unit = self
                     .get_keyset_by_id(&proof.keyset_id)
                     .await?
                     .map(|ks| ks.unit)
-                {
+                    .or(wallet_unit);
+                if let Some(proof_unit) = proof_unit {
                     let info =
                         ProofInfo::new(proof, wallet_mint_url.clone(), proof_state, proof_unit)?;
                     if info.matches_conditions(&mint_url, &unit, &state, &spending_conditions) {
@@ -482,6 +515,7 @@ impl WalletDatabase for WalletNostrDatabase {
                 }
             }
         }
+        println!("Proofs: {:?}", proofs);
         Ok(proofs)
     }
 
@@ -491,6 +525,10 @@ impl WalletDatabase for WalletNostrDatabase {
         removed: Vec<ProofInfo>,
     ) -> Result<(), Self::Err> {
         let tx = TxInfo::new(added, removed);
+        let mint_urls = tx.mint_urls();
+        for mint_url in mint_urls {
+            self.save_mint_url(&mint_url).await;
+        }
         let event = tx.to_event(&self.id, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
             db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
@@ -526,6 +564,7 @@ impl WalletDatabase for WalletNostrDatabase {
         _verifying_key: &PublicKey,
     ) -> Result<Option<u32>, Self::Err> {
         let filters = vec![Filter {
+            authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![TX_KIND].into_iter().collect()),
             generic_tags: vec![(
                 SingleLetterTag::from_char(ID_TAG).expect("ID_TAG is not a single letter tag"),
@@ -715,7 +754,13 @@ impl WalletInfo {
     }
 }
 
-fn mint_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MintQuote, Error> {
+fn mint_quote_from_event(
+    event: &Event,
+    keys: &nostr_sdk::Keys,
+) -> Result<Option<MintQuote>, Error> {
+    if event.verify().is_err() {
+        return Ok(None);
+    }
     let mut id: Option<String> = None;
     let mut mint_url: Option<UncheckedUrl> = None;
     let mut amount: Option<Amount> = None;
@@ -733,6 +778,15 @@ fn mint_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MintQu
     tags.extend(content);
     for tag in tags {
         match tag.kind().to_string().as_str() {
+            QUOTE_TYPE_TAG => {
+                if tag
+                    .content()
+                    .ok_or(Error::EmptyTag(QUOTE_TYPE_TAG.to_string()))?
+                    != MINT_QUOTE_TYPE
+                {
+                    return Ok(None);
+                }
+            }
             QUOTE_ID_TAG => {
                 id = Some(
                     tag.content()
@@ -780,6 +834,11 @@ fn mint_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MintQu
             _ => {}
         }
     }
+    if let Some(expiry) = expiry {
+        if expiry < Timestamp::now().as_u64() {
+            return Ok(None);
+        }
+    }
 
     let quote = MintQuote {
         id: id.ok_or(Error::MissingTag(QUOTE_ID_TAG.to_string()))?,
@@ -790,7 +849,7 @@ fn mint_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MintQu
         state: state.ok_or(Error::MissingTag(STATE_TAG.to_string()))?,
         expiry: expiry.ok_or(Error::MissingTag(EXPIRATION_TAG.to_string()))?,
     };
-    Ok(quote)
+    Ok(Some(quote))
 }
 
 fn mint_quote_to_event(
@@ -800,11 +859,13 @@ fn mint_quote_to_event(
 ) -> Result<Event, Error> {
     let mut content = Vec::new();
     let mut tags = Vec::new();
+    content.push(Tag::parse(&[QUOTE_TYPE_TAG, MINT_QUOTE_TYPE])?);
     content.push(Tag::parse(&[QUOTE_ID_TAG, &quote.id])?);
     content.push(Tag::parse(&[MINT_TAG, &quote.mint_url.to_string()])?);
     content.push(Tag::parse(&[AMOUNT_TAG, &quote.amount.to_string()])?);
     content.push(Tag::parse(&[UNIT_TAG, &quote.unit.to_string()])?);
     content.push(Tag::parse(&[REQUEST_TAG, &quote.request])?);
+    content.push(Tag::parse(&[STATE_TAG, &quote.state.to_string()])?);
     tags.push(wallet_link_tag(wallet_id, keys)?);
     tags.push(Tag::parse(&[
         &EXPIRATION_TAG.to_string(),
@@ -823,7 +884,13 @@ fn mint_quote_to_event(
     Ok(event.to_event(keys)?)
 }
 
-fn melt_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MeltQuote, Error> {
+fn melt_quote_from_event(
+    event: &Event,
+    keys: &nostr_sdk::Keys,
+) -> Result<Option<MeltQuote>, Error> {
+    if event.verify().is_err() {
+        return Ok(None);
+    }
     let mut id: Option<String> = None;
     let mut amount: Option<Amount> = None;
     let mut unit: Option<CurrencyUnit> = None;
@@ -841,6 +908,15 @@ fn melt_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MeltQu
     tags.extend(content);
     for tag in tags {
         match tag.kind().to_string().as_str() {
+            QUOTE_TYPE_TAG => {
+                if tag
+                    .content()
+                    .ok_or(Error::EmptyTag(QUOTE_TYPE_TAG.to_string()))?
+                    != MELT_QUOTE_TYPE
+                {
+                    return Ok(None);
+                }
+            }
             QUOTE_ID_TAG => {
                 id = Some(
                     tag.content()
@@ -891,6 +967,11 @@ fn melt_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MeltQu
             _ => {}
         }
     }
+    if let Some(expiry) = expiry {
+        if expiry < Timestamp::now().as_u64() {
+            return Ok(None);
+        }
+    }
 
     let quote = MeltQuote {
         id: id.ok_or(Error::MissingTag(QUOTE_ID_TAG.to_string()))?,
@@ -902,7 +983,7 @@ fn melt_quote_from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<MeltQu
         expiry: expiry.ok_or(Error::MissingTag(EXPIRATION_TAG.to_string()))?,
         payment_preimage: preimage,
     };
-    Ok(quote)
+    Ok(Some(quote))
 }
 
 fn melt_quote_to_event(
@@ -912,6 +993,7 @@ fn melt_quote_to_event(
 ) -> Result<Event, Error> {
     let mut content = Vec::new();
     let mut tags = Vec::new();
+    content.push(Tag::parse(&[QUOTE_TYPE_TAG, MELT_QUOTE_TYPE])?);
     content.push(Tag::parse(&[QUOTE_ID_TAG, &quote.id])?);
     content.push(Tag::parse(&[AMOUNT_TAG, &quote.amount.to_string()])?);
     content.push(Tag::parse(&[UNIT_TAG, &quote.unit.to_string()])?);
@@ -963,6 +1045,17 @@ impl TxInfo {
         Self { inputs, outputs }
     }
 
+    fn mint_urls(&self) -> HashSet<UncheckedUrl> {
+        let mut mint_urls = HashSet::new();
+        for input in &self.inputs {
+            mint_urls.insert(input.mint_url.clone());
+        }
+        for output in &self.outputs {
+            mint_urls.insert(output.mint_url.clone());
+        }
+        mint_urls
+    }
+
     fn from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<Self, Error> {
         Ok(serde_json::from_str(&nip44::decrypt(
             keys.secret_key()?,
@@ -995,6 +1088,7 @@ struct EventProofs {
     proofs: Vec<Proof>,
 }
 
+#[derive(Debug)]
 struct WalletProofs {
     proofs: HashMap<UncheckedUrl, Vec<Proof>>,
 }
@@ -1039,8 +1133,12 @@ impl From<Vec<TxInfo>> for WalletProofs {
 fn wallet_link_tag(wallet_id: &str, keys: &nostr_sdk::Keys) -> Result<Tag, Error> {
     Ok(Tag::parse(&[
         &ID_LINK_TAG.to_string(),
-        &format!("{}:{}:{}", WALLET_INFO_KIND, keys.public_key(), wallet_id),
+        &wallet_link_tag_value(wallet_id, keys),
     ])?)
+}
+
+fn wallet_link_tag_value(wallet_id: &str, keys: &nostr_sdk::Keys) -> String {
+    format!("{}:{}:{}", WALLET_INFO_KIND, keys.public_key(), wallet_id)
 }
 
 /// WalletNostrDatabase error
