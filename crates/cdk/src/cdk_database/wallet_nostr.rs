@@ -17,7 +17,7 @@ use nostr_sdk::{
     SubscribeAutoCloseOptions, Tag, TagKind, Timestamp,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, RwLockWriteGuard};
 use url::Url;
 
 use crate::{
@@ -69,6 +69,7 @@ pub struct WalletNostrDatabase {
     db: Option<Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>>,
 
     // In-memory storage
+    wallet_info: Arc<RwLock<WalletInfo>>,
     mint_infos: Arc<RwLock<HashMap<UncheckedUrl, MintInfo>>>,
     mint_keysets: Arc<RwLock<HashMap<UncheckedUrl, HashSet<Id>>>>,
     keysets: Arc<RwLock<HashMap<Id, KeySetInfo>>>,
@@ -86,7 +87,9 @@ impl WalletNostrDatabase {
         let client = Client::new(&keys);
         client.add_relays(relays).await?;
         client.connect().await;
-        Ok(Self::new(client, keys, id, None))
+        let self_ = Self::new(client, keys, id, None);
+        self_.refresh_wallet_info().await?;
+        Ok(self_)
     }
 
     /// Create a new WalletNostrDatabase with a local database
@@ -102,7 +105,9 @@ impl WalletNostrDatabase {
         let client = Client::new(&keys);
         client.add_relays(relays).await?;
         client.connect().await;
-        Ok(Self::new(client, keys, id, Some(Arc::new(Box::new(db)))))
+        let self_ = Self::new(client, keys, id, Some(Arc::new(Box::new(db))));
+        self_.refresh_wallet_info().await?;
+        Ok(self_)
     }
 
     fn new(
@@ -111,11 +116,16 @@ impl WalletNostrDatabase {
         id: String,
         db: Option<Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>>,
     ) -> Self {
+        let wallet_info = WalletInfo {
+            id: id.clone(),
+            ..Default::default()
+        };
         Self {
             client,
             keys,
             id,
             db,
+            wallet_info: Arc::new(RwLock::new(wallet_info)),
             mint_infos: Arc::new(RwLock::new(HashMap::new())),
             mint_keysets: Arc::new(RwLock::new(HashMap::new())),
             keysets: Arc::new(RwLock::new(HashMap::new())),
@@ -124,8 +134,8 @@ impl WalletNostrDatabase {
         }
     }
 
-    /// Get wallet info
-    pub async fn get_wallet_info(&self) -> Result<WalletInfo, Error> {
+    /// Refresh wallet info from relays
+    pub async fn refresh_wallet_info(&self) -> Result<WalletInfo, Error> {
         let filters = vec![Filter {
             authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![WALLET_INFO_KIND].into_iter().collect()),
@@ -138,36 +148,49 @@ impl WalletNostrDatabase {
             ..Default::default()
         }];
         let events = self.get_events(filters).await?;
-        match latest_event(events) {
-            Some(event) => WalletInfo::from_event(&event, &self.keys),
+        let wallet_info = match latest_event(events) {
+            Some(event) => {
+                let info = WalletInfo::from_event(&event, &self.keys)?;
+                let mut wallet_info = self.wallet_info.write().await;
+                *wallet_info = info.clone();
+                info
+            }
             None => {
                 let info = WalletInfo {
                     id: self.id.clone(),
-                    balance: None,
-                    mints: HashSet::new(),
-                    name: None,
-                    unit: Some(CurrencyUnit::Sat),
-                    description: None,
-                    relays: HashSet::new(),
-                    p2pk_priv_key: None,
-                    counters: HashMap::new(),
+                    ..Default::default()
                 };
                 self.save_wallet_info(info.clone()).await?;
-                Ok(info)
+                info
             }
-        }
+        };
+        Ok(wallet_info)
     }
 
     /// Save wallet info
     pub async fn save_wallet_info(&self, info: WalletInfo) -> Result<EventId, Error> {
+        let mut wallet_info = self.wallet_info.write().await;
+        *wallet_info = info.clone();
         let event = info.to_event(&self.keys)?;
         Ok(self.client.send_event(event).await?.val)
     }
 
-    async fn save_mint_url(&self, mint_url: &UncheckedUrl) {
-        if !self.mint_infos.read().await.contains_key(mint_url) {
-            let _ = self.add_mint(mint_url.clone(), None).await;
+    async fn save_wallet_info_with_lock<'a>(
+        &self,
+        info: &RwLockWriteGuard<'a, WalletInfo>,
+    ) -> Result<EventId, Error> {
+        let event = info.to_event(&self.keys)?;
+        Ok(self.client.send_event(event).await?.val)
+    }
+
+    async fn save_mint_url(&self, mint_url: &UncheckedUrl) -> Result<(), Error> {
+        let mut wallet_info = self.wallet_info.write().await;
+        if wallet_info.mints.contains(mint_url) {
+            return Ok(());
         }
+        wallet_info.mints.insert(mint_url.clone());
+        let _ = self.save_wallet_info_with_lock(&wallet_info).await?;
+        Ok(())
     }
 
     async fn get_events(&self, filters: Vec<Filter>) -> Result<Vec<Event>, Error> {
@@ -253,22 +276,21 @@ impl WalletDatabase for WalletNostrDatabase {
         mint_url: UncheckedUrl,
         mint_info: Option<MintInfo>,
     ) -> Result<(), Self::Err> {
-        let mut info = self.get_wallet_info().await.map_err(map_err)?;
-        info.mints.insert(mint_url.clone());
-        self.save_wallet_info(info).await.map_err(map_err)?;
+        let mut mint_infos = self.mint_infos.write().await;
         if let Some(mint_info) = mint_info {
-            self.mint_infos
-                .write()
-                .await
-                .insert(mint_url, mint_info.clone());
+            mint_infos.insert(mint_url.clone(), mint_info.clone());
         }
+        self.save_mint_url(&mint_url).await.map_err(map_err)?;
         Ok(())
     }
 
     async fn remove_mint(&self, mint_url: UncheckedUrl) -> Result<(), Self::Err> {
-        let mut info = self.get_wallet_info().await.map_err(map_err)?;
-        info.mints.retain(|url| url != &mint_url);
-        self.save_wallet_info(info).await.map_err(map_err)?;
+        let mut wallet_info = self.wallet_info.write().await;
+        wallet_info.mints.retain(|url| url != &mint_url);
+        let _ = self
+            .save_wallet_info_with_lock(&wallet_info)
+            .await
+            .map_err(map_err)?;
         self.mint_infos.write().await.remove(&mint_url);
         Ok(())
     }
@@ -278,7 +300,7 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn get_mints(&self) -> Result<HashMap<UncheckedUrl, Option<MintInfo>>, Self::Err> {
-        let info = self.get_wallet_info().await.map_err(map_err)?;
+        let info = self.wallet_info.read().await.clone();
         let mut mints = HashMap::new();
         for mint in info.mints {
             mints.insert(mint, None);
@@ -291,10 +313,12 @@ impl WalletDatabase for WalletNostrDatabase {
         old_mint_url: UncheckedUrl,
         new_mint_url: UncheckedUrl,
     ) -> Result<(), Self::Err> {
-        let mut info = self.get_wallet_info().await.map_err(map_err)?;
-        info.mints.retain(|url| url != &old_mint_url);
-        info.mints.insert(new_mint_url);
-        self.save_wallet_info(info).await.map_err(map_err)?;
+        let mut wallet_info = self.wallet_info.write().await;
+        wallet_info.mints.retain(|url| url != &old_mint_url);
+        wallet_info.mints.insert(new_mint_url);
+        self.save_wallet_info_with_lock(&wallet_info)
+            .await
+            .map_err(map_err)?;
         Ok(())
     }
 
@@ -303,7 +327,6 @@ impl WalletDatabase for WalletNostrDatabase {
         mint_url: UncheckedUrl,
         keysets: Vec<KeySetInfo>,
     ) -> Result<(), Self::Err> {
-        self.save_mint_url(&mint_url).await;
         let mut current_mint_keysets = self.mint_keysets.write().await;
         let mut current_keysets = self.keysets.write().await;
 
@@ -317,6 +340,8 @@ impl WalletDatabase for WalletNostrDatabase {
 
             current_keysets.insert(keyset.id, keyset);
         }
+
+        self.save_mint_url(&mint_url).await.map_err(map_err)?;
 
         Ok(())
     }
@@ -348,7 +373,6 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn add_mint_quote(&self, quote: MintQuote) -> Result<(), Self::Err> {
-        self.save_mint_url(&quote.mint_url).await;
         let event = mint_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
             db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
@@ -357,6 +381,9 @@ impl WalletDatabase for WalletNostrDatabase {
             .send_event(event)
             .await
             .map_err(|e| map_err(e.into()))?;
+
+        self.save_mint_url(&quote.mint_url).await.map_err(map_err)?;
+
         Ok(())
     }
 
@@ -400,7 +427,7 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn add_melt_quote(&self, quote: MeltQuote) -> Result<(), Self::Err> {
-        // self.save_mint_url(&quote.mint_url).await;
+        // self.save_mint_url(&quote.mint_url).await.map_err(map_err)?;
         let event = melt_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
             db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
@@ -467,6 +494,22 @@ impl WalletDatabase for WalletNostrDatabase {
         state: Option<Vec<State>>,
         spending_conditions: Option<Vec<SpendingConditions>>,
     ) -> Result<Vec<ProofInfo>, Self::Err> {
+        let wallet_info = self.wallet_info.read().await.clone();
+        let wallet_unit = match wallet_info.unit {
+            Some(unit) => {
+                drop(wallet_info);
+                unit
+            }
+            None => {
+                drop(wallet_info);
+                self.refresh_wallet_info()
+                    .await
+                    .map_err(map_err)?
+                    .unit
+                    .unwrap_or(CurrencyUnit::Sat)
+            }
+        };
+
         let filters = vec![Filter {
             authors: Some(vec![self.keys.public_key()].into_iter().collect()),
             kinds: Some(vec![TX_KIND].into_iter().collect()),
@@ -488,34 +531,26 @@ impl WalletDatabase for WalletNostrDatabase {
             .collect::<Result<Vec<TxInfo>, Error>>()
             .map_err(map_err)?;
         let wallet_proofs = WalletProofs::from(txs);
-        println!("Wallet proofs: {:?}", wallet_proofs);
 
         let mut proofs = Vec::new();
+        let proof_states = self.proof_states.read().await;
         for (wallet_mint_url, mint_proofs) in wallet_proofs.proofs {
             for proof in mint_proofs {
-                let proof_state = self
-                    .proof_states
-                    .read()
-                    .await
+                let proof_state = proof_states
                     .get(&proof.y()?)
                     .cloned()
                     .unwrap_or(State::Unspent);
-                let wallet_unit = self.get_wallet_info().await.map_err(map_err)?.unit;
                 let proof_unit = self
                     .get_keyset_by_id(&proof.keyset_id)
                     .await?
                     .map(|ks| ks.unit)
-                    .or(wallet_unit);
-                if let Some(proof_unit) = proof_unit {
-                    let info =
-                        ProofInfo::new(proof, wallet_mint_url.clone(), proof_state, proof_unit)?;
-                    if info.matches_conditions(&mint_url, &unit, &state, &spending_conditions) {
-                        proofs.push(info);
-                    }
+                    .unwrap_or(wallet_unit); // TODO: error if proof is not wallet unit?
+                let info = ProofInfo::new(proof, wallet_mint_url.clone(), proof_state, proof_unit)?;
+                if info.matches_conditions(&mint_url, &unit, &state, &spending_conditions) {
+                    proofs.push(info);
                 }
             }
         }
-        println!("Proofs: {:?}", proofs);
         Ok(proofs)
     }
 
@@ -527,7 +562,7 @@ impl WalletDatabase for WalletNostrDatabase {
         let tx = TxInfo::new(added, removed);
         let mint_urls = tx.mint_urls();
         for mint_url in mint_urls {
-            self.save_mint_url(&mint_url).await;
+            self.save_mint_url(&mint_url).await.map_err(map_err)?;
         }
         let event = tx.to_event(&self.id, &self.keys).map_err(map_err)?;
         if let Some(db) = &self.db {
@@ -547,15 +582,17 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn increment_keyset_counter(&self, keyset_id: &Id, count: u32) -> Result<(), Self::Err> {
-        let mut info = self.get_wallet_info().await.map_err(map_err)?;
-        let counter = info.counters.entry(keyset_id.clone()).or_insert(0);
+        let mut wallet_info = self.wallet_info.write().await;
+        let counter = wallet_info.counters.entry(keyset_id.clone()).or_insert(0);
         *counter += count;
-        self.save_wallet_info(info).await.map_err(map_err)?;
+        self.save_wallet_info_with_lock(&wallet_info)
+            .await
+            .map_err(map_err)?;
         Ok(())
     }
 
     async fn get_keyset_counter(&self, id: &Id) -> Result<Option<u32>, Self::Err> {
-        let info = self.get_wallet_info().await.map_err(map_err)?;
+        let info = self.wallet_info.read().await;
         Ok(info.counters.get(id).cloned())
     }
 
@@ -613,6 +650,22 @@ pub struct WalletInfo {
     pub counters: HashMap<Id, u32>,
 }
 
+impl Default for WalletInfo {
+    fn default() -> Self {
+        WalletInfo {
+            id: String::new(),
+            balance: None,
+            mints: HashSet::new(),
+            name: None,
+            unit: Some(CurrencyUnit::Sat),
+            description: None,
+            relays: HashSet::new(),
+            p2pk_priv_key: None,
+            counters: HashMap::new(),
+        }
+    }
+}
+
 impl WalletInfo {
     fn from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<Self, Error> {
         let id_tag = event.tags().iter().find(|tag| {
@@ -627,14 +680,7 @@ impl WalletInfo {
             .ok_or(Error::EmptyTag(ID_TAG.to_string()))?;
         let mut info = WalletInfo {
             id: id.to_string(),
-            balance: None,
-            mints: HashSet::new(),
-            name: None,
-            unit: None,
-            description: None,
-            relays: HashSet::new(),
-            p2pk_priv_key: None,
-            counters: HashMap::new(),
+            ..Default::default()
         };
         let content: Vec<Tag> = serde_json::from_str(&nip44::decrypt(
             keys.secret_key()?,
