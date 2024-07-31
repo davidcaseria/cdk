@@ -31,3 +31,4 @@ tracing-subscriber.workspace = true
 rand = "0.8.5"
 home.workspace = true
 nostr-sdk.workspace = true
+nostr-ndb = "0.33"

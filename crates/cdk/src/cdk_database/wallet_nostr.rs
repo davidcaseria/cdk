@@ -13,7 +13,7 @@ use itertools::Itertools;
 use nostr_database::DatabaseError;
 use nostr_sdk::{
     client, nips::nip44, Client, Event, EventBuilder, EventId, Filter, FilterOptions, Kind,
-    NostrDatabase, RelayMessage, RelayPoolNotification, SecretKey, SingleLetterTag,
+    NostrDatabase, RelayMessage, RelayPoolNotification, RelayStatus, SecretKey, SingleLetterTag,
     SubscribeAutoCloseOptions, Tag, TagKind, Timestamp,
 };
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub struct WalletNostrDatabase {
     id: String,
 
     // Local disk storage
-    db: Option<Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>>,
+    db: Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>,
 
     // In-memory storage
     wallet_info: Arc<RwLock<WalletInfo>>,
@@ -78,22 +78,8 @@ pub struct WalletNostrDatabase {
 }
 
 impl WalletNostrDatabase {
-    /// Create a new WalletNostrDatabase
-    pub async fn remote(
-        id: String,
-        keys: nostr_sdk::Keys,
-        relays: Vec<Url>,
-    ) -> Result<Self, Error> {
-        let client = Client::new(&keys);
-        client.add_relays(relays).await?;
-        client.connect().await;
-        let self_ = Self::new(client, keys, id, None);
-        self_.refresh_wallet_info().await?;
-        Ok(self_)
-    }
-
-    /// Create a new WalletNostrDatabase with a local database
-    pub async fn local<D>(
+    /// Create a new WalletNostrDatabase with a local event database
+    pub async fn new<D>(
         id: String,
         keys: nostr_sdk::Keys,
         relays: Vec<Url>,
@@ -105,33 +91,24 @@ impl WalletNostrDatabase {
         let client = Client::new(&keys);
         client.add_relays(relays).await?;
         client.connect().await;
-        let self_ = Self::new(client, keys, id, Some(Arc::new(Box::new(db))));
-        self_.refresh_wallet_info().await?;
-        Ok(self_)
-    }
-
-    fn new(
-        client: Client,
-        keys: nostr_sdk::Keys,
-        id: String,
-        db: Option<Arc<Box<dyn NostrDatabase<Err = DatabaseError>>>>,
-    ) -> Self {
         let wallet_info = WalletInfo {
             id: id.clone(),
             ..Default::default()
         };
-        Self {
+        let self_ = Self {
             client,
             keys,
             id,
-            db,
+            db: Arc::new(Box::new(db)),
             wallet_info: Arc::new(RwLock::new(wallet_info)),
             mint_infos: Arc::new(RwLock::new(HashMap::new())),
             mint_keysets: Arc::new(RwLock::new(HashMap::new())),
             keysets: Arc::new(RwLock::new(HashMap::new())),
             mint_keys: Arc::new(RwLock::new(HashMap::new())),
             proof_states: Arc::new(RwLock::new(HashMap::new())),
-        }
+        };
+        self_.refresh_wallet_info().await?;
+        Ok(self_)
     }
 
     /// Refresh wallet info from relays
@@ -172,7 +149,7 @@ impl WalletNostrDatabase {
         let mut wallet_info = self.wallet_info.write().await;
         *wallet_info = info.clone();
         let event = info.to_event(&self.keys)?;
-        Ok(self.client.send_event(event).await?.val)
+        self.save_event(event).await
     }
 
     async fn save_wallet_info_with_lock<'a>(
@@ -180,7 +157,7 @@ impl WalletNostrDatabase {
         info: &RwLockWriteGuard<'a, WalletInfo>,
     ) -> Result<EventId, Error> {
         let event = info.to_event(&self.keys)?;
-        Ok(self.client.send_event(event).await?.val)
+        self.save_event(event).await
     }
 
     async fn save_mint_url(&self, mint_url: &UncheckedUrl) -> Result<(), Error> {
@@ -194,49 +171,65 @@ impl WalletNostrDatabase {
     }
 
     async fn get_events(&self, filters: Vec<Filter>) -> Result<Vec<Event>, Error> {
-        if let Some(db) = &self.db {
-            Ok(db.query(filters, nostr_database::Order::Asc).await?)
-        } else {
-            let mut notifications = self.client.notifications();
-            let sub_id = self
-                .client
-                .subscribe(
-                    filters,
-                    Some(
-                        SubscribeAutoCloseOptions::default()
-                            .filter(FilterOptions::ExitOnEOSE)
-                            .timeout(Some(Duration::from_secs(10))),
-                    ),
-                )
-                .await?
-                .val;
-            let mut events = Vec::new();
-            let mut relay_urls: HashSet<Url> = self.client.relays().await.keys().cloned().collect();
-            loop {
-                match notifications.recv().await {
-                    Ok(RelayPoolNotification::Event {
-                        subscription_id,
-                        event,
-                        ..
-                    }) => {
-                        if subscription_id == sub_id {
-                            events.push(*event);
+        // TODO: configure sync events
+        self.sync_events(filters.clone()).await?;
+        Ok(self.db.query(filters, nostr_database::Order::Asc).await?)
+    }
+
+    async fn save_event(&self, event: Event) -> Result<EventId, Error> {
+        self.db.save_event(&event).await?;
+        Ok(self.client.send_event(event).await?.val)
+    }
+
+    async fn sync_events(&self, filters: Vec<Filter>) -> Result<(), Error> {
+        let mut notifications = self.client.notifications();
+        let sub_id = self
+            .client
+            .subscribe(
+                filters,
+                Some(
+                    SubscribeAutoCloseOptions::default()
+                        .filter(FilterOptions::ExitOnEOSE)
+                        .timeout(Some(Duration::from_secs(10))),
+                ),
+            )
+            .await?
+            .val;
+        let mut relay_urls: HashSet<Url> = self.client.relays().await.keys().cloned().collect();
+        loop {
+            match notifications.recv().await {
+                Ok(RelayPoolNotification::Event {
+                    subscription_id,
+                    event,
+                    ..
+                }) => {
+                    if subscription_id == sub_id {
+                        self.db.save_event(&event).await?;
+                    }
+                }
+                Ok(RelayPoolNotification::Message { relay_url, message }) => match message {
+                    RelayMessage::EndOfStoredEvents(_) => {
+                        relay_urls.remove(&relay_url);
+                        if relay_urls.is_empty() {
+                            break Ok(());
                         }
                     }
-                    Ok(RelayPoolNotification::Message { relay_url, message }) => match message {
-                        RelayMessage::EndOfStoredEvents(_) => {
-                            relay_urls.remove(&relay_url);
-                            if relay_urls.is_empty() {
-                                break;
-                            }
+                    _ => {}
+                },
+                Ok(RelayPoolNotification::RelayStatus { relay_url, status }) => match status {
+                    RelayStatus::Disconnected | RelayStatus::Terminated => {
+                        relay_urls.remove(&relay_url);
+                        if relay_urls.is_empty() {
+                            break Ok(());
                         }
-                        _ => {}
-                    },
-                    Ok(_) => {}
-                    Err(e) => return Err(e.into()),
+                    }
+                    _ => {}
+                },
+                Ok(RelayPoolNotification::Shutdown) => {
+                    break Err(Error::RelayPoolShutdown);
                 }
+                Err(e) => return Err(e.into()),
             }
-            Ok(events)
         }
     }
 }
@@ -374,16 +367,8 @@ impl WalletDatabase for WalletNostrDatabase {
 
     async fn add_mint_quote(&self, quote: MintQuote) -> Result<(), Self::Err> {
         let event = mint_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
-        if let Some(db) = &self.db {
-            db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
-        }
-        self.client
-            .send_event(event)
-            .await
-            .map_err(|e| map_err(e.into()))?;
-
+        self.save_event(event).await.map_err(map_err)?;
         self.save_mint_url(&quote.mint_url).await.map_err(map_err)?;
-
         Ok(())
     }
 
@@ -427,15 +412,8 @@ impl WalletDatabase for WalletNostrDatabase {
     }
 
     async fn add_melt_quote(&self, quote: MeltQuote) -> Result<(), Self::Err> {
-        // self.save_mint_url(&quote.mint_url).await.map_err(map_err)?;
         let event = melt_quote_to_event(&self.id, &quote, &self.keys).map_err(map_err)?;
-        if let Some(db) = &self.db {
-            db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
-        }
-        self.client
-            .send_event(event)
-            .await
-            .map_err(|e| map_err(e.into()))?;
+        self.save_event(event).await.map_err(map_err)?;
         Ok(())
     }
 
@@ -565,13 +543,7 @@ impl WalletDatabase for WalletNostrDatabase {
             self.save_mint_url(&mint_url).await.map_err(map_err)?;
         }
         let event = tx.to_event(&self.id, &self.keys).map_err(map_err)?;
-        if let Some(db) = &self.db {
-            db.save_event(&event).await.map_err(|e| map_err(e.into()))?;
-        }
-        self.client
-            .send_event(event)
-            .await
-            .map_err(|e| map_err(e.into()))?;
+        self.save_event(event).await.map_err(map_err)?;
         Ok(())
     }
 
@@ -1232,6 +1204,9 @@ pub enum Error {
     /// Parse int error
     #[error(transparent)]
     ParseInt(#[from] std::num::ParseIntError),
+    /// Relay pool shutdown error
+    #[error("Relay pool shutdown")]
+    RelayPoolShutdown,
     /// Subscribe error
     #[error(transparent)]
     Subscribe(#[from] tokio::sync::broadcast::error::RecvError),
