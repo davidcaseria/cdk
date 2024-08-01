@@ -537,11 +537,8 @@ impl WalletDatabase for WalletNostrDatabase {
         added: Vec<ProofInfo>,
         removed: Vec<ProofInfo>,
     ) -> Result<(), Self::Err> {
+        println!("update_proofs");
         let tx = TxInfo::new(added, removed);
-        let mint_urls = tx.mint_urls();
-        for mint_url in mint_urls {
-            self.save_mint_url(&mint_url).await.map_err(map_err)?;
-        }
         let event = tx.to_event(&self.id, &self.keys).map_err(map_err)?;
         self.save_event(event).await.map_err(map_err)?;
         Ok(())
@@ -1061,17 +1058,6 @@ impl TxInfo {
             })
             .collect();
         Self { inputs, outputs }
-    }
-
-    fn mint_urls(&self) -> HashSet<UncheckedUrl> {
-        let mut mint_urls = HashSet::new();
-        for input in &self.inputs {
-            mint_urls.insert(input.mint_url.clone());
-        }
-        for output in &self.outputs {
-            mint_urls.insert(output.mint_url.clone());
-        }
-        mint_urls
     }
 
     fn from_event(event: &Event, keys: &nostr_sdk::Keys) -> Result<Self, Error> {
