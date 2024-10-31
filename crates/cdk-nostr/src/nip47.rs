@@ -16,7 +16,7 @@ use nostr_sdk::{
         nip47::{self, MakeInvoiceResponseResult, NostrWalletConnectURI},
     },
     Alphabet, Client, Event, EventBuilder, EventId, EventSource, Filter, JsonUtil, Keys, Kind,
-    PublicKey, SecretKey, SingleLetterTag, Tag, TagStandard, Timestamp, Url,
+    PublicKey, SecretKey, SingleLetterTag, Tag, TagKind, TagStandard, Timestamp, Url,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -106,11 +106,25 @@ impl NostrWalletConnect {
             .collect()
     }
 
-    /// Handle a NWC event.
+    /// Handle a NWC request event.
     pub async fn handle_event(
         &self,
         event: Event,
     ) -> Result<(Event, Option<PaymentDetails>), Error> {
+        if event.kind != Kind::WalletConnectRequest {
+            return Err(Error::InvalidKind);
+        }
+        let service_pubkey = PublicKey::from_str(
+            event
+                .get_tag_content(TagKind::SingleLetter(SingleLetterTag::lowercase(
+                    Alphabet::P,
+                )))
+                .ok_or(Error::MissingServiceKey)?,
+        )?;
+        if service_pubkey != self.keys.public_key() {
+            return Err(Error::InvalidServiceKey(service_pubkey));
+        }
+
         let event_id = event.id;
         let mut response_events = self.response_event_cache.lock().await;
         if let Some(res) = response_events.get(&event_id) {
@@ -569,12 +583,21 @@ pub enum Error {
     /// Invalid invoice error.
     #[error("Invalid invoice")]
     InvalidInvoice,
+    /// Invalid kind error.
+    #[error("Invalid kind")]
+    InvalidKind,
+    /// Invalid service key error.
+    #[error("Invalid service key: {0}")]
+    InvalidServiceKey(PublicKey),
     /// Error parsing an invoice.
     #[error(transparent)]
     InvoiceParse(#[from] lightning_invoice::ParseOrSemanticError),
     /// Nostr key error.
     #[error(transparent)]
     Key(#[from] nostr_sdk::key::Error),
+    /// Missing service key error.
+    #[error("Missing service key")]
+    MissingServiceKey,
     /// NIP-04 error.
     #[error(transparent)]
     Nip04(#[from] nip04::Error),
