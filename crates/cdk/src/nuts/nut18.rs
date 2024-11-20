@@ -2,19 +2,17 @@
 //!
 //! <https://github.com/cashubtc/nuts/blob/main/18.md>
 
-use std::{fmt, str::FromStr};
+use std::fmt;
+use std::str::FromStr;
 
-use bitcoin::base64::{
-    alphabet,
-    engine::{general_purpose, GeneralPurpose},
-    Engine,
-};
+use bitcoin::base64::engine::{general_purpose, GeneralPurpose};
+use bitcoin::base64::{alphabet, Engine};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{mint_url::MintUrl, Amount};
-
 use super::{CurrencyUnit, Proofs};
+use crate::mint_url::MintUrl;
+use crate::Amount;
 
 const PAYMENT_REQUEST_PREFIX: &str = "creqA";
 
@@ -154,7 +152,7 @@ mod tests {
 
         assert_eq!(&req.payment_id.unwrap(), "b7a90176");
         assert_eq!(req.amount.unwrap(), 10.into());
-        assert_eq!(req.unit.unwrap(), CurrencyUnit::Sat);
+        assert_eq!(req.unit.clone().unwrap(), CurrencyUnit::Sat);
         assert_eq!(
             req.mints.unwrap(),
             vec![MintUrl::from_str("https://nofees.testnut.cashu.space")?]
@@ -190,7 +188,7 @@ mod tests {
 
         assert_eq!(&req.payment_id.unwrap(), "b7a90176");
         assert_eq!(req.amount.unwrap(), 10.into());
-        assert_eq!(req.unit.unwrap(), CurrencyUnit::Sat);
+        assert_eq!(req.unit.clone().unwrap(), CurrencyUnit::Sat);
         assert_eq!(
             req.mints.unwrap(),
             vec![MintUrl::from_str("https://nofees.testnut.cashu.space")?]

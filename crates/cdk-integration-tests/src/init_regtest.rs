@@ -1,20 +1,23 @@
-use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
+use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
 use bip39::Mnemonic;
-use cdk::{
-    cdk_database::{self, MintDatabase},
-    cdk_lightning::MintLightning,
-    mint::{FeeReserve, Mint},
-    nuts::{CurrencyUnit, MeltMethodSettings, MintInfo, MintMethodSettings},
-    types::{LnKey, QuoteTTL},
-};
+use cdk::cdk_database::{self, MintDatabase};
+use cdk::cdk_lightning::MintLightning;
+use cdk::mint::{FeeReserve, Mint};
+use cdk::nuts::{CurrencyUnit, MintInfo};
+use cdk::types::{LnKey, QuoteTTL};
 use cdk_cln::Cln as CdkCln;
-use ln_regtest_rs::{
-    bitcoin_client::BitcoinClient, bitcoind::Bitcoind, cln::Clnd, cln_client::ClnClient, lnd::Lnd,
-    lnd_client::LndClient,
-};
+use ln_regtest_rs::bitcoin_client::BitcoinClient;
+use ln_regtest_rs::bitcoind::Bitcoind;
+use ln_regtest_rs::cln::Clnd;
+use ln_regtest_rs::cln_client::ClnClient;
+use ln_regtest_rs::lnd::Lnd;
+use ln_regtest_rs::lnd_client::LndClient;
 use tokio::sync::Notify;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
@@ -43,6 +46,10 @@ pub fn get_mint_port() -> u16 {
 
 pub fn get_mint_url() -> String {
     format!("http://{}:{}", get_mint_addr(), get_mint_port())
+}
+
+pub fn get_mint_ws_url() -> String {
+    format!("ws://{}:{}/v1/ws", get_mint_addr(), get_mint_port())
 }
 
 pub fn get_temp_dir() -> PathBuf {
@@ -131,13 +138,7 @@ pub async fn create_cln_backend(cln_client: &ClnClient) -> Result<CdkCln> {
         percent_fee_reserve: 1.0,
     };
 
-    Ok(CdkCln::new(
-        rpc_path,
-        fee_reserve,
-        MintMethodSettings::default(),
-        MeltMethodSettings::default(),
-    )
-    .await?)
+    Ok(CdkCln::new(rpc_path, fee_reserve).await?)
 }
 
 pub async fn create_mint<D>(
@@ -176,6 +177,7 @@ where
         Arc::new(database),
         ln_backends,
         supported_units,
+        HashMap::new(),
     )
     .await?;
 

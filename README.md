@@ -23,6 +23,7 @@ The project is split up into several crates in the `crates/` directory:
     * [**cdk-lnd**](./crates/cdk-lnd/): Lnd Lightning backend for mint.
     * [**cdk-strike**](./crates/cdk-strike/): Strike Lightning backend for mint.
     * [**cdk-lnbits**](./crates/cdk-lnbits/): [LNbits](https://lnbits.com/) Lightning backend for mint.
+    * [**cdk-phoenixd**](./crates/cdk-phoenixd/): Phoenixd Lightning backend for mint.
     * [**cdk-fake-wallet**](./crates/cdk-fake-wallet/): Fake Lightning backend for mint. To be used only for testing, quotes are automatically filled.
 * Binaries:
     * [**cdk-cli**](./crates/cdk-cli/): Cashu wallet CLI.
@@ -59,11 +60,10 @@ The project is split up into several crates in the `crates/` directory:
 | [16][16] | Animated QR codes | :x: |
 | [17][17] | WebSocket subscriptions  | :construction: |
 
-MSRV
 
 ## Bindings
 
-Experimental bindings can be found in the [bindings](./bindings/) folder.
+Experimental JS bindings can be found in the [bindings repository](https://github.com/thesimplekid/cdk-js).
 
 ## License
 
@@ -71,9 +71,12 @@ Code is under the [MIT License](LICENSE)
 
 ## Contribution
 
-All contributions welcome.
+All contributions are welcome.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, shall be licensed as above, without any additional terms or conditions.
+
+Please see the [development guide](DEVELOPMENT.md).
+
 
 [00]: https://github.com/cashubtc/nuts/blob/main/00.md
 [01]: https://github.com/cashubtc/nuts/blob/main/01.md

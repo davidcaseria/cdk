@@ -1,13 +1,13 @@
 use std::io::{self, Write};
 
 use anyhow::{anyhow, Result};
-use cdk::{
-    amount::SplitTarget,
-    nuts::{nut18::TransportType, PaymentRequest, PaymentRequestPayload},
-    wallet::{MultiMintWallet, SendKind},
-};
+use cdk::amount::SplitTarget;
+use cdk::nuts::nut18::TransportType;
+use cdk::nuts::{PaymentRequest, PaymentRequestPayload};
+use cdk::wallet::{MultiMintWallet, SendKind};
 use clap::Args;
-use nostr_sdk::{nips::nip19::Nip19Profile, Client as NostrClient, EventBuilder, FromBech32, Keys};
+use nostr_sdk::nips::nip19::Nip19Profile;
+use nostr_sdk::{Client as NostrClient, EventBuilder, FromBech32, Keys};
 use reqwest::Client;
 
 #[derive(Args)]
@@ -21,7 +21,7 @@ pub async fn pay_request(
 ) -> Result<()> {
     let payment_request = &sub_command_args.payment_request;
 
-    let unit = payment_request.unit;
+    let unit = &payment_request.unit;
 
     let amount = match payment_request.amount {
         Some(amount) => amount,
@@ -56,7 +56,7 @@ pub async fn pay_request(
         }
 
         if let Some(unit) = unit {
-            if wallet.unit != unit {
+            if &wallet.unit != unit {
                 continue;
             }
         }
@@ -97,7 +97,7 @@ pub async fn pay_request(
         id: payment_request.payment_id.clone(),
         memo: None,
         mint: matching_wallet.mint_url.clone(),
-        unit: matching_wallet.unit,
+        unit: matching_wallet.unit.clone(),
         proofs,
     };
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["bindings/cdk-js", "crates/*"]
+members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]

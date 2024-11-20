@@ -2,9 +2,8 @@ use std::collections::HashSet;
 
 use tracing::instrument;
 
-use crate::Error;
-
 use super::{CheckStateRequest, CheckStateResponse, Mint, ProofState, PublicKey, State};
+use crate::Error;
 
 impl Mint {
     /// Check state
@@ -55,6 +54,10 @@ impl Mint {
 
         if proofs_state.contains(&State::Spent) {
             return Err(Error::TokenAlreadySpent);
+        }
+
+        for public_key in ys {
+            self.pubsub_manager.proof_state((*public_key, proof_state));
         }
 
         Ok(())

@@ -6,9 +6,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::nuts::Id;
+use crate::util::hex;
 #[cfg(feature = "wallet")]
 use crate::wallet::multi_mint_wallet::WalletKey;
-use crate::{nuts::Id, util::hex, Amount};
+use crate::Amount;
 
 /// CDK Error
 #[derive(Debug, Error)]
@@ -241,6 +243,10 @@ pub enum Error {
     #[cfg(any(feature = "wallet", feature = "mint"))]
     #[error(transparent)]
     Database(#[from] crate::cdk_database::Error),
+    /// Lightning Error
+    #[cfg(feature = "mint")]
+    #[error(transparent)]
+    Lightning(#[from] crate::cdk_lightning::Error),
 }
 
 /// CDK Error Response

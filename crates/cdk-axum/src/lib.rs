@@ -14,6 +14,7 @@ use moka::future::Cache;
 use router_handlers::*;
 
 mod router_handlers;
+mod ws;
 
 #[cfg(feature = "swagger")]
 mod swagger_imports {
@@ -25,12 +26,10 @@ mod swagger_imports {
     pub use cdk::nuts::nut01::{Keys, KeysResponse, PublicKey, SecretKey};
     pub use cdk::nuts::nut02::{Id, KeySet, KeySetInfo, KeySetVersion, KeysetResponse};
     pub use cdk::nuts::nut03::{SwapRequest, SwapResponse};
-    pub use cdk::nuts::nut04;
     pub use cdk::nuts::nut04::{
         MintBolt11Request, MintBolt11Response, MintMethodSettings, MintQuoteBolt11Request,
         MintQuoteBolt11Response,
     };
-    pub use cdk::nuts::nut05;
     pub use cdk::nuts::nut05::{
         MeltBolt11Request, MeltMethodSettings, MeltQuoteBolt11Request, MeltQuoteBolt11Response,
     };
@@ -40,9 +39,8 @@ mod swagger_imports {
     pub use cdk::nuts::nut11::P2PKWitness;
     pub use cdk::nuts::nut12::{BlindSignatureDleq, ProofDleq};
     pub use cdk::nuts::nut14::HTLCWitness;
-    pub use cdk::nuts::nut15;
     pub use cdk::nuts::nut15::{Mpp, MppMethodSettings};
-    pub use cdk::nuts::{MeltQuoteState, MintQuoteState};
+    pub use cdk::nuts::{nut04, nut05, nut15, MeltQuoteState, MintQuoteState};
 }
 
 #[cfg(feature = "swagger")]
@@ -117,10 +115,10 @@ pub struct MintState {
         get_keyset_pubkeys,
         get_keysets,
         get_mint_info,
-        get_mint_bolt11_quote,
+        post_mint_bolt11_quote,
         get_check_mint_bolt11_quote,
         post_mint_bolt11,
-        get_melt_bolt11_quote,
+        post_melt_bolt11_quote,
         get_check_melt_bolt11_quote,
         post_melt_bolt11,
         post_swap,
@@ -147,13 +145,14 @@ pub async fn create_mint_router(mint: Arc<Mint>, cache_ttl: u64, cache_tti: u64)
         .route("/keysets", get(get_keysets))
         .route("/keys/:keyset_id", get(get_keyset_pubkeys))
         .route("/swap", post(cache_post_swap))
-        .route("/mint/quote/bolt11", post(get_mint_bolt11_quote))
+        .route("/mint/quote/bolt11", post(post_mint_bolt11_quote))
         .route(
             "/mint/quote/bolt11/:quote_id",
             get(get_check_mint_bolt11_quote),
         )
         .route("/mint/bolt11", post(cache_post_mint_bolt11))
-        .route("/melt/quote/bolt11", post(get_melt_bolt11_quote))
+        .route("/melt/quote/bolt11", post(post_melt_bolt11_quote))
+        .route("/ws", get(ws_handler))
         .route(
             "/melt/quote/bolt11/:quote_id",
             get(get_check_melt_bolt11_quote),

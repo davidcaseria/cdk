@@ -2,11 +2,10 @@ use std::collections::HashSet;
 
 use tracing::instrument;
 
-use crate::nuts::nut00::ProofsMethods;
-use crate::Error;
-
 use super::nut11::{enforce_sig_flag, EnforceSigFlag};
 use super::{Id, Mint, PublicKey, SigFlag, State, SwapRequest, SwapResponse};
+use crate::nuts::nut00::ProofsMethods;
+use crate::Error;
 
 impl Mint {
     /// Process Swap
@@ -165,6 +164,10 @@ impl Mint {
         self.localstore
             .update_proofs_states(&input_ys, State::Spent)
             .await?;
+
+        for pub_key in input_ys {
+            self.pubsub_manager.proof_state((pub_key, State::Spent));
+        }
 
         self.localstore
             .add_blind_signatures(
