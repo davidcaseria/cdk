@@ -17,6 +17,7 @@ bip39 = "2.0"
 cdk = { path = "../cdk", version = "0.5.0", default-features = false, features = [
     "wallet",
 ] }
+cdk-nostr = { path = "../cdk-nostr", version = "0.5.0", default-features = false }
 cdk-redb = { path = "../cdk-redb", version = "0.5.0", default-features = false, features = [
     "wallet",
 ] }

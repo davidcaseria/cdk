@@ -1,6 +1,6 @@
 [package]
 name = "cdk-nostr"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["CDK Developers"]
 description = "Core Cashu Development Kit library implementing the Cashu protocol"
@@ -12,7 +12,7 @@ license.workspace = true
 [dependencies]
 async-trait = "0.1"
 bitcoin = { version = "0.32.2", default-features = false }
-cdk = { path = "../cdk", version = "0.4.0", default-features = false, features = [
+cdk = { path = "../cdk", version = "0.5.0", default-features = false, features = [
     "wallet",
 ] }
 hkdf = "0.12.4"

@@ -118,7 +118,7 @@ impl NutZapper {
     ) -> Result<EventId, Error> {
         let wallet = self
             .wallet
-            .get_wallet(&WalletKey::new(mint_url.clone(), unit))
+            .get_wallet(&WalletKey::new(mint_url.clone(), unit.clone()))
             .await
             .ok_or(Error::MissingWallet)?;
         let token = wallet
