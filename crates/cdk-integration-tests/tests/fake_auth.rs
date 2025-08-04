@@ -36,7 +36,7 @@ async fn test_invalid_credentials() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -274,7 +274,7 @@ async fn test_mint_blind_auth() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
     let mint_info = wallet.get_mint_info().await.unwrap().unwrap();
@@ -304,7 +304,7 @@ async fn test_mint_with_auth() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -354,7 +354,7 @@ async fn test_swap_with_auth() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
     let mint_info = wallet.get_mint_info().await.unwrap().unwrap();
@@ -407,7 +407,7 @@ async fn test_melt_with_auth() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -447,7 +447,7 @@ async fn test_mint_auth_over_max() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -489,7 +489,7 @@ async fn test_reuse_auth_proof() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
     let mint_info = wallet.get_mint_info().await.unwrap().unwrap();
@@ -514,7 +514,7 @@ async fn test_reuse_auth_proof() {
             .await
             .expect("Quote should be allowed");
 
-        assert!(quote.amount == 10.into());
+        assert!(quote.amount == Some(10.into()));
     }
 
     wallet
@@ -541,7 +541,7 @@ async fn test_melt_with_invalid_auth() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
     let mint_info = wallet.get_mint_info().await.unwrap().unwrap();
@@ -604,7 +604,7 @@ async fn test_refresh_access_token() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -645,7 +645,7 @@ async fn test_refresh_access_token() {
         .await
         .expect("failed to get mint quote with refreshed token");
 
-    assert_eq!(mint_quote.amount, mint_amount);
+    assert_eq!(mint_quote.amount, Some(mint_amount));
 
     // Verify the total number of auth tokens
     let total_auth_proofs = wallet.get_unspent_auth_proofs().await.unwrap();
@@ -660,7 +660,7 @@ async fn test_invalid_refresh_token() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -696,7 +696,7 @@ async fn test_auth_token_spending_order() {
         .mint_url(MintUrl::from_str(MINT_URL).expect("Valid mint url"))
         .unit(CurrencyUnit::Sat)
         .localstore(db.clone())
-        .seed(&Mnemonic::generate(12).unwrap().to_seed_normalized(""))
+        .seed(Mnemonic::generate(12).unwrap().to_seed_normalized(""))
         .build()
         .expect("Wallet");
 
@@ -731,7 +731,7 @@ async fn test_auth_token_spending_order() {
             .await
             .expect("failed to get mint quote");
 
-        assert_eq!(mint_quote.amount, 10.into());
+        assert_eq!(mint_quote.amount, Some(10.into()));
 
         // Check remaining tokens after each operation
         let remaining = wallet.get_unspent_auth_proofs().await.unwrap();
@@ -753,7 +753,7 @@ async fn get_access_token(mint_info: &MintInfo) -> (String, String) {
         .expect("Nutxx defined")
         .openid_discovery;
 
-    let oidc_client = OidcClient::new(openid_discovery);
+    let oidc_client = OidcClient::new(openid_discovery, None);
 
     // Get the token endpoint from the OIDC configuration
     let token_url = oidc_client
@@ -811,7 +811,7 @@ async fn get_custom_access_token(
         .expect("Nutxx defined")
         .openid_discovery;
 
-    let oidc_client = OidcClient::new(openid_discovery);
+    let oidc_client = OidcClient::new(openid_discovery, None);
 
     // Get the token endpoint from the OIDC configuration
     let token_url = oidc_client

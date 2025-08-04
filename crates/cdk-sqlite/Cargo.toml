@@ -13,20 +13,21 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["mint", "wallet", "auth"]
-mint = ["cdk-common/mint"]
-wallet = ["cdk-common/wallet"]
-auth = ["cdk-common/auth"]
+mint = ["cdk-common/mint", "cdk-sql-common/mint"]
+wallet = ["cdk-common/wallet", "cdk-sql-common/wallet"]
+auth = ["cdk-common/auth", "cdk-sql-common/auth"]
 sqlcipher = ["rusqlite/bundled-sqlcipher"]
 
 [dependencies]
 async-trait.workspace = true
 cdk-common = { workspace = true, features = ["test"] }
 bitcoin.workspace = true
+cdk-sql-common = { workspace = true }
 rusqlite = { git = "https://github.com/Spxg/rusqlite", rev = "e36644127f31fa6e7ea0999b59432deb4a07f220", features = [
     "bundled",
 ] }
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -24,7 +24,7 @@ async fn main() -> Result<(), Error> {
     let localstore = Arc::new(memory::empty().await?);
 
     // Generate a random seed for the wallet
-    let seed = random::<[u8; 32]>();
+    let seed = random::<[u8; 64]>();
 
     // Define the mint URL and currency unit
     let mint_url = "https://fake.thesimplekid.dev";
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Error> {
     let amount = Amount::from(100);
 
     // Create a new wallet
-    let wallet = Wallet::new(mint_url, unit, localstore, &seed, None).unwrap();
+    let wallet = Wallet::new(mint_url, unit, localstore, seed, None).unwrap();
 
     // Request a mint quote from the wallet
     let quote = wallet.mint_quote(amount, None).await?;
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Error> {
         )
         .await?;
     println!("Fee: {}", prepared_send.fee());
-    let token = wallet.send(prepared_send, None).await?;
+    let token = prepared_send.confirm(None).await?;
 
     println!("Created token locked to pubkey: {}", secret.public_key());
     println!("{}", token);

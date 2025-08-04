@@ -4,6 +4,49 @@
 <!-- The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), -->
 <!-- and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). -->
 
+## [Unreleased]
+
+### Added
+- dev: Goose recipes for changelog and commit message generation with Just commands ([thesimplekid]).
+- cashu: `KeySetInfos` type alias and `KeySetInfosMethods` trait for filtering keysets ([thesimplekid]).
+- cdk: Mint lifecycle management with `start()` and `stop()` methods for graceful background service control ([thesimplekid]).
+- cdk: Background task management for invoice payment monitoring with proper shutdown handling ([thesimplekid]).
+- cashu: NUT-19 support in the wallet ([crodas]).
+- cdk: SIG_ALL support for swap and melt operations ([thesimplekid]).
+- cdk-sql-common: Add cache to SQL statements for better performance ([crodas]).
+- cdk-integration-tests: New binary `start_fake_auth_mint` for testing fake mint with authentication ([thesimplekid]).
+- cdk-integration-tests: New binary `start_fake_mint` for testing fake mint instances ([thesimplekid]).
+- cdk-integration-tests: New binary `start_regtest_mints` for testing regtest mints ([thesimplekid]).
+- cdk-integration-tests: Shared utilities module for common integration test functionality ([thesimplekid]).
+
+### Changed
+- cdk: Refactored wallet keyset management methods for better clarity and separation of concerns ([thesimplekid]).
+- cdk: Renamed `get_keyset_keys` to `fetch_keyset_keys` to indicate network operation ([thesimplekid]).
+- cdk: Renamed `get_active_mint_keyset` to `fetch_active_keyset` for consistency ([thesimplekid]).
+- cdk: Updated `get_active_mint_keysets` to `refresh_keysets` with improved keyset refresh logic ([thesimplekid]).
+- cdk: Improved `load_mint_keysets` method to be the primary method for getting keysets for token operations ([thesimplekid]).
+- cdk: Enhanced keyset management with better offline/online operation separation ([thesimplekid]).
+- cdk: Updated method documentation to clarify storage vs network operations ([thesimplekid]).
+- cdk: Refactored invoice payment monitoring to use centralized lifecycle management instead of manual task spawning ([thesimplekid]).
+- cdk-mintd: Updated to use new mint lifecycle methods for improved service management ([thesimplekid]).
+- cdk-integration-tests: Updated test utilities to use new mint lifecycle management ([thesimplekid]).
+- cdk-sqlite: Introduce `cdk-sql-common` crate for shared SQL storage codebase ([crodas]).
+- cdk-sqlite: Rename `still_active` to `stale` for better clarity ([crodas]).
+- cdk-integration-tests: Refactored regtest setup to use Rust binaries instead of shell scripts ([thesimplekid]).
+- cdk-integration-tests: Improved environment variable handling for test configurations ([thesimplekid]).
+- cdk-integration-tests: Enhanced CLN client connection with retry logic ([thesimplekid]).
+- cdk-integration-tests: Updated integration tests to use proper temp directory management ([thesimplekid]).
+- cdk-integration-tests: Simplified regtest shell scripts to use new binaries ([thesimplekid]).
+- crates/cdk-mintd: Moved mintd library functions to separate module for better organization and testability ([thesimplekid]).
+
+### Fixed
+- cashu: Fixed CurrencyUnit custom units preserving original case instead of being converted to uppercase ([thesimplekid]).
+- cdk-sqlite: Fix `get_mint_quote_by_request_lookup_id` function synchronization ([crodas]).
+- cdk-common: Fix TransactionId::from_hex to check bytes length before copy to avoid panic ([codingpeanut157]).
+- cdk: Include change in melt quote state updates ([thesimplekid]).
+
+### Migration
+- cdk-sql-common: Improve migrations with namespaced and global migrations support ([crodas]).
 
 
 ## [0.11.0](https://github.com/cashubtc/cdk/releases/tag/v0.11.0)
@@ -428,3 +471,4 @@ Additionally, this release introduces a Mint binary cdk-mintd that uses the cdk-
 [Darrell]: https://github.com/Darrellbor
 [asmo]: https://github.com/asmogo
 [gudnuf]: https://github.com/gudnuf
+[codingpeanut157]: https://github.com/codingpeanut157

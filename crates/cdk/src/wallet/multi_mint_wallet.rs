@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::instrument;
 
 use super::receive::ReceiveOptions;
-use super::send::{PreparedSend, SendMemo, SendOptions};
+use super::send::{PreparedSend, SendOptions};
 use super::Error;
 use crate::amount::SplitTarget;
 use crate::mint_url::MintUrl;
@@ -29,7 +29,7 @@ use crate::{ensure_cdk, Amount, Wallet};
 pub struct MultiMintWallet {
     /// Storage backend
     pub localstore: Arc<dyn WalletDatabase<Err = database::Error> + Send + Sync>,
-    seed: Arc<[u8]>,
+    seed: [u8; 64],
     /// Wallets
     pub wallets: Arc<RwLock<BTreeMap<WalletKey, Wallet>>>,
 }
@@ -38,7 +38,7 @@ impl MultiMintWallet {
     /// Create a new [MultiMintWallet] with initial wallets
     pub fn new(
         localstore: Arc<dyn WalletDatabase<Err = database::Error> + Send + Sync>,
-        seed: Arc<[u8]>,
+        seed: [u8; 64],
         wallets: Vec<Wallet>,
     ) -> Self {
         Self {
@@ -74,7 +74,7 @@ impl MultiMintWallet {
             mint_url,
             unit,
             self.localstore.clone(),
-            self.seed.as_ref(),
+            self.seed,
             target_proof_count,
         )?;
 
@@ -177,22 +177,6 @@ impl MultiMintWallet {
         wallet.prepare_send(amount, opts).await
     }
 
-    /// Create cashu token
-    #[instrument(skip(self))]
-    pub async fn send(
-        &self,
-        wallet_key: &WalletKey,
-        send: PreparedSend,
-        memo: Option<SendMemo>,
-    ) -> Result<Token, Error> {
-        let wallets = self.wallets.read().await;
-        let wallet = wallets
-            .get(wallet_key)
-            .ok_or(Error::UnknownWallet(wallet_key.clone()))?;
-
-        wallet.send(send, memo).await
-    }
-
     /// Mint quote for wallet
     #[instrument(skip(self))]
     pub async fn mint_quote(
@@ -293,7 +277,7 @@ impl MultiMintWallet {
         {
             Some(keysets_info) => keysets_info,
             // Hit the keysets endpoint if we don't have the keysets for this Mint
-            None => wallet.get_mint_keysets().await?,
+            None => wallet.load_mint_keysets().await?,
         };
         let proofs = token_data.proofs(&keysets_info)?;
 

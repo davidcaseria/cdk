@@ -11,10 +11,11 @@ use super::MintSqliteDatabase;
 /// Creates a new in-memory [`MintSqliteDatabase`] instance
 pub async fn empty() -> Result<MintSqliteDatabase, database::Error> {
     #[cfg(not(feature = "sqlcipher"))]
-    let db = MintSqliteDatabase::new(":memory:").await?;
+    let path = ":memory:";
     #[cfg(feature = "sqlcipher")]
-    let db = MintSqliteDatabase::new(":memory:", "memory".to_string()).await?;
-    Ok(db)
+    let path = (":memory:", "memory");
+
+    MintSqliteDatabase::new(path).await
 }
 
 /// Creates a new in-memory [`MintSqliteDatabase`] instance with the given state
@@ -44,7 +45,7 @@ pub async fn new_with_state(
     let mut tx = MintDatabase::begin_transaction(&db).await?;
 
     for quote in mint_quotes {
-        tx.add_or_replace_mint_quote(quote).await?;
+        tx.add_mint_quote(quote).await?;
     }
 
     for quote in melt_quotes {

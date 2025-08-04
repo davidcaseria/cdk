@@ -18,6 +18,8 @@ use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use url::Url;
 
+#[cfg(feature = "bip353")]
+mod bip353;
 mod nostr_storage;
 mod sub_commands;
 mod token_storage;
@@ -126,7 +128,7 @@ async fn main() -> Result<()> {
                 #[cfg(feature = "sqlcipher")]
                 let sql = {
                     match args.password {
-                        Some(pass) => WalletSqliteDatabase::new(&sql_path, pass).await?,
+                        Some(pass) => WalletSqliteDatabase::new((sql_path, pass)).await?,
                         None => bail!("Missing database password"),
                     }
                 };
@@ -198,7 +200,7 @@ async fn main() -> Result<()> {
                 .mint_url(mint_url_clone.clone())
                 .unit(unit)
                 .localstore(localstore.clone())
-                .seed(&seed);
+                .seed(seed);
 
             if let Some(http_client) = &proxy_client {
                 builder = builder.client(http_client.clone());
@@ -222,7 +224,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let multi_mint_wallet = MultiMintWallet::new(localstore, Arc::new(seed), wallets);
+    let multi_mint_wallet = MultiMintWallet::new(localstore, seed, wallets);
 
     match &args.command {
         Commands::DecodeToken(sub_command_args) => {

@@ -445,18 +445,17 @@ pub struct KeySet {
 impl KeySet {
     /// Verify the keyset id matches keys
     pub fn verify_id(&self) -> Result<(), Error> {
-        match self.id.version {
-            KeySetVersion::Version00 => {
-                let keys_id: Id = Id::v1_from_keys(&self.keys);
+        let keys_id = match self.id.version {
+            KeySetVersion::Version00 => Id::v1_from_keys(&self.keys),
+            KeySetVersion::Version01 => Id::v2_from_data(&self.keys, &self.unit, self.final_expiry),
+        };
 
-                ensure_cdk!(keys_id == self.id, Error::IncorrectKeysetId);
-            }
-            KeySetVersion::Version01 => {
-                let keys_id: Id = Id::v2_from_data(&self.keys, &self.unit, self.final_expiry);
+        ensure_cdk!(
+            u32::from(keys_id) == u32::from(self.id),
+            Error::IncorrectKeysetId
+        );
 
-                ensure_cdk!(keys_id == self.id, Error::IncorrectKeysetId);
-            }
-        }
+        ensure_cdk!(keys_id == self.id, Error::IncorrectKeysetId);
 
         Ok(())
     }
@@ -495,6 +494,28 @@ pub struct KeySetInfo {
     /// Expiry of the keyset
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_expiry: Option<u64>,
+}
+
+/// List of [KeySetInfo]
+pub type KeySetInfos = Vec<KeySetInfo>;
+
+/// Utility methods for [KeySetInfos]
+pub trait KeySetInfosMethods {
+    /// Filter for active keysets
+    fn active(&self) -> impl Iterator<Item = &KeySetInfo> + '_;
+
+    /// Filter keysets for specific unit
+    fn unit(&self, unit: CurrencyUnit) -> impl Iterator<Item = &KeySetInfo> + '_;
+}
+
+impl KeySetInfosMethods for KeySetInfos {
+    fn active(&self) -> impl Iterator<Item = &KeySetInfo> + '_ {
+        self.iter().filter(|k| k.active)
+    }
+
+    fn unit(&self, unit: CurrencyUnit) -> impl Iterator<Item = &KeySetInfo> + '_ {
+        self.iter().filter(move |k| k.unit == unit)
+    }
 }
 
 fn deserialize_input_fee_ppk<'de, D>(deserializer: D) -> Result<u64, D::Error>

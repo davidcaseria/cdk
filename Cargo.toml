@@ -54,13 +54,16 @@ cdk-fake-wallet = { path = "./crates/cdk-fake-wallet", version = "=0.11.0" }
 cdk-payment-processor = { path = "./crates/cdk-payment-processor", default-features = true, version = "=0.11.0" }
 cdk-mint-rpc = { path = "./crates/cdk-mint-rpc", version = "=0.11.0" }
 cdk-redb = { path = "./crates/cdk-redb", default-features = true, version = "=0.11.0" }
+cdk-sql-common = { path = "./crates/cdk-sql-common", default-features = true, version = "=0.11.0" }
 cdk-sqlite = { path = "./crates/cdk-sqlite", default-features = true, version = "=0.11.0" }
 cdk-signatory = { path = "./crates/cdk-signatory", version = "=0.11.0", default-features = false }
+cdk-mintd = { path = "./crates/cdk-mintd", version = "=0.11.0", default-features = false }
 clap = { version = "4.5.31", features = ["derive"] }
 ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
 cbor-diag = "0.1.12"
 futures = { version = "0.3.28", default-features = false, features = ["async-await"] }
 lightning-invoice = { version = "0.33.0", features = ["serde", "std"] }
+lightning = { version = "0.1.2", default-features = false, features = ["std"]}
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = { version = "2" }
