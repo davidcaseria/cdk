@@ -250,14 +250,10 @@ impl Mint {
 
                 let description = bolt12_request.description;
 
-                let mint_ttl = self.localstore.get_quote_ttl().await?.mint_ttl;
-
-                let expiry = unix_time() + mint_ttl;
-
                 let bolt12_options = Bolt12IncomingPaymentOptions {
                     description,
                     amount,
-                    unix_expiry: Some(expiry),
+                    unix_expiry: None,
                 };
 
                 let incoming_options = IncomingPaymentOptions::Bolt12(Box::new(bolt12_options));
@@ -293,7 +289,7 @@ impl Mint {
             quote.id,
             amount,
             unit,
-            create_invoice_response.request_lookup_id,
+            create_invoice_response.request_lookup_id.to_string(),
         );
 
         let mut tx = self.localstore.begin_transaction().await?;
@@ -364,7 +360,7 @@ impl Mint {
         if wait_payment_response.payment_amount == Amount::ZERO {
             tracing::warn!(
                 "Received payment response with 0 amount with payment id {}.",
-                wait_payment_response.payment_id
+                wait_payment_response.payment_id.to_string()
             );
 
             return Err(Error::AmountUndefined);
@@ -409,38 +405,8 @@ impl Mint {
         mint_quote: &MintQuote,
         wait_payment_response: WaitPaymentResponse,
     ) -> Result<(), Error> {
-        tracing::debug!(
-            "Received payment notification of {} for mint quote {} with payment id {}",
-            wait_payment_response.payment_amount,
-            mint_quote.id,
-            wait_payment_response.payment_id
-        );
-
-        let quote_state = mint_quote.state();
-        if !mint_quote
-            .payment_ids()
-            .contains(&&wait_payment_response.payment_id)
-        {
-            if mint_quote.payment_method == PaymentMethod::Bolt11
-                && (quote_state == MintQuoteState::Issued || quote_state == MintQuoteState::Paid)
-            {
-                tracing::info!("Received payment notification for already seen payment.");
-            } else {
-                tx.increment_mint_quote_amount_paid(
-                    &mint_quote.id,
-                    wait_payment_response.payment_amount,
-                    wait_payment_response.payment_id,
-                )
-                .await?;
-
-                self.pubsub_manager
-                    .mint_quote_bolt11_status(mint_quote.clone(), MintQuoteState::Paid);
-            }
-        } else {
-            tracing::info!("Received payment notification for already seen payment.");
-        }
-
-        Ok(())
+        Self::handle_mint_quote_payment(tx, mint_quote, wait_payment_response, &self.pubsub_manager)
+            .await
     }
 
     /// Checks the status of a mint quote and updates it if necessary
@@ -462,7 +428,9 @@ impl Mint {
             .await?
             .ok_or(Error::UnknownQuote)?;
 
-        self.check_mint_quote_paid(&mut quote).await?;
+        if quote.payment_method == PaymentMethod::Bolt11 {
+            self.check_mint_quote_paid(&mut quote).await?;
+        }
 
         quote.try_into()
     }
@@ -493,8 +461,15 @@ impl Mint {
             .get_mint_quote(&mint_request.quote)
             .await?
             .ok_or(Error::UnknownQuote)?;
+        if mint_quote.payment_method == PaymentMethod::Bolt11 {
+            self.check_mint_quote_paid(&mut mint_quote).await?;
+        }
 
-        self.check_mint_quote_paid(&mut mint_quote).await?;
+        // get the blind signatures before having starting the db transaction, if there are any
+        // rollbacks this blind_signatures will be lost, and the signature is stateless. It is not a
+        // good idea to call an external service (which is really a trait, it could be anything
+        // anywhere) while keeping a database transaction on-going
+        let blind_signatures = self.blind_sign(mint_request.outputs.clone()).await?;
 
         let mut tx = self.localstore.begin_transaction().await?;
 
@@ -546,34 +521,40 @@ impl Mint {
             mint_request.verify_signature(pubkey)?;
         }
 
-        let Verification { amount, unit } =
-            match self.verify_outputs(&mut tx, &mint_request.outputs).await {
-                Ok(verification) => verification,
-                Err(err) => {
-                    tracing::debug!("Could not verify mint outputs");
+        let Verification {
+            amount: outputs_amount,
+            unit,
+        } = match self.verify_outputs(&mut tx, &mint_request.outputs).await {
+            Ok(verification) => verification,
+            Err(err) => {
+                tracing::debug!("Could not verify mint outputs");
 
-                    return Err(err);
-                }
-            };
+                return Err(err);
+            }
+        };
 
-        // We check the total value of blinded messages == mint quote
-        if amount != mint_amount {
-            return Err(Error::TransactionUnbalanced(
-                mint_amount.into(),
-                mint_request.total_amount()?.into(),
-                0,
-            ));
+        if mint_quote.payment_method == PaymentMethod::Bolt11 {
+            // For bolt11 we enforce that mint amount == quote amount
+            if outputs_amount != mint_amount {
+                return Err(Error::TransactionUnbalanced(
+                    mint_amount.into(),
+                    mint_request.total_amount()?.into(),
+                    0,
+                ));
+            }
+        } else {
+            // For other payments we just make sure outputs is not more then mint amount
+            if outputs_amount > mint_amount {
+                return Err(Error::TransactionUnbalanced(
+                    mint_amount.into(),
+                    mint_request.total_amount()?.into(),
+                    0,
+                ));
+            }
         }
 
         let unit = unit.ok_or(Error::UnsupportedUnit).unwrap();
         ensure_cdk!(unit == mint_quote.unit, Error::UnsupportedUnit);
-
-        let mut blind_signatures = Vec::with_capacity(mint_request.outputs.len());
-
-        for blinded_message in mint_request.outputs.iter() {
-            let blind_signature = self.blind_sign(blinded_message.clone()).await?;
-            blind_signatures.push(blind_signature);
-        }
 
         tx.add_blind_signatures(
             &mint_request
@@ -586,13 +567,16 @@ impl Mint {
         )
         .await?;
 
-        tx.increment_mint_quote_amount_issued(&mint_request.quote, mint_request.total_amount()?)
+        let amount_issued = mint_request.total_amount()?;
+
+        let total_issued = tx
+            .increment_mint_quote_amount_issued(&mint_request.quote, amount_issued)
             .await?;
 
         tx.commit().await?;
 
         self.pubsub_manager
-            .mint_quote_bolt11_status(mint_quote, MintQuoteState::Issued);
+            .mint_quote_issue(&mint_quote, total_issued);
 
         Ok(MintResponse {
             signatures: blind_signatures,

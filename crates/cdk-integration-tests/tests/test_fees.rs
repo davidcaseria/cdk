@@ -7,9 +7,7 @@ use cdk::amount::{Amount, SplitTarget};
 use cdk::nuts::CurrencyUnit;
 use cdk::wallet::{ReceiveOptions, SendKind, SendOptions, Wallet};
 use cdk_integration_tests::init_regtest::get_temp_dir;
-use cdk_integration_tests::{
-    create_invoice_for_env, get_mint_url_from_env, pay_if_regtest, wait_for_mint_to_be_paid,
-};
+use cdk_integration_tests::{create_invoice_for_env, get_mint_url_from_env, pay_if_regtest};
 use cdk_sqlite::wallet::memory;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -29,22 +27,15 @@ async fn test_swap() {
     let invoice = Bolt11Invoice::from_str(&mint_quote.request).unwrap();
     pay_if_regtest(&get_temp_dir(), &invoice).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 10)
+    let proofs = wallet
+        .wait_and_mint_quote(
+            mint_quote.clone(),
+            SplitTarget::default(),
+            None,
+            tokio::time::Duration::from_secs(15),
+        )
         .await
-        .unwrap();
-
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
-        .await
-        .unwrap();
-
-    let proofs: Vec<Amount> = wallet
-        .get_unspent_proofs()
-        .await
-        .unwrap()
-        .iter()
-        .map(|p| p.amount)
-        .collect();
+        .expect("payment");
 
     println!("{:?}", proofs);
 
@@ -96,20 +87,19 @@ async fn test_fake_melt_change_in_quote() {
 
     pay_if_regtest(&get_temp_dir(), &bolt11).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
+    let _proofs = wallet
+        .wait_and_mint_quote(
+            mint_quote.clone(),
+            SplitTarget::default(),
+            None,
+            tokio::time::Duration::from_secs(15),
+        )
         .await
-        .unwrap();
-
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
-        .await
-        .unwrap();
+        .expect("payment");
 
     let invoice_amount = 9;
 
-    let invoice = create_invoice_for_env(&get_temp_dir(), Some(invoice_amount))
-        .await
-        .unwrap();
+    let invoice = create_invoice_for_env(Some(invoice_amount)).await.unwrap();
 
     let melt_quote = wallet.melt_quote(invoice.to_string(), None).await.unwrap();
 

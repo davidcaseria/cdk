@@ -19,6 +19,7 @@ use cdk_integration_tests::cli::CommonArgs;
 use cdk_integration_tests::shared;
 use clap::Parser;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(name = "start-fake-mint")]
@@ -46,6 +47,7 @@ struct Args {
 async fn start_fake_mint(
     temp_dir: &Path,
     port: u16,
+    database: &str,
     shutdown: Arc<Notify>,
     external_signatory: bool,
 ) -> Result<tokio::task::JoinHandle<()>> {
@@ -77,8 +79,13 @@ async fn start_fake_mint(
     });
 
     // Create settings struct for fake mint using shared function
-    let settings =
-        shared::create_fake_wallet_settings(port, mnemonic, signatory_config, fake_wallet_config);
+    let settings = shared::create_fake_wallet_settings(
+        port,
+        database,
+        mnemonic,
+        signatory_config,
+        fake_wallet_config,
+    );
 
     println!("Starting fake mintd on port {port}");
 
@@ -93,7 +100,8 @@ async fn start_fake_mint(
             println!("Fake mint shutdown signal received");
         };
 
-        match cdk_mintd::run_mintd_with_shutdown(&temp_dir, &settings, shutdown_future, None).await
+        match cdk_mintd::run_mintd_with_shutdown(&temp_dir, &settings, shutdown_future, None, None)
+            .await
         {
             Ok(_) => println!("Fake mint exited normally"),
             Err(e) => eprintln!("Fake mint exited with error: {e}"),
@@ -129,13 +137,16 @@ async fn main() -> Result<()> {
     let handle = start_fake_mint(
         &temp_dir,
         args.port,
+        &args.database_type,
         shutdown_clone,
         args.external_signatory,
     )
     .await?;
 
+    let cancel_token = Arc::new(CancellationToken::new());
+
     // Wait for fake mint to be ready
-    if let Err(e) = shared::wait_for_mint_ready(args.port, 100).await {
+    if let Err(e) = shared::wait_for_mint_ready_with_shutdown(args.port, 100, cancel_token).await {
         eprintln!("Error waiting for fake mint: {e}");
         return Err(e);
     }

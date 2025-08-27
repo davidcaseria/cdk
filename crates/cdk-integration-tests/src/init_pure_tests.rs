@@ -22,13 +22,11 @@ use cdk::nuts::{
 use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
 use cdk::wallet::{AuthWallet, MintConnector, Wallet, WalletBuilder};
-use cdk::{Amount, Error, Mint};
+use cdk::{Amount, Error, Mint, StreamExt};
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
-
-use crate::wait_for_mint_to_be_paid;
 
 pub struct DirectMintConnection {
     pub mint: Mint,
@@ -253,6 +251,7 @@ pub async fn create_and_start_test_mint() -> Result<Mint> {
         HashMap::default(),
         HashSet::default(),
         0,
+        CurrencyUnit::Sat,
     );
 
     mint_builder
@@ -361,10 +360,10 @@ pub async fn fund_wallet(
     let desired_amount = Amount::from(amount);
     let quote = wallet.mint_quote(desired_amount, None).await?;
 
-    wait_for_mint_to_be_paid(&wallet, &quote.id, 60).await?;
-
     Ok(wallet
-        .mint(&quote.id, split_target.unwrap_or_default(), None)
-        .await?
+        .proof_stream(quote, split_target.unwrap_or_default(), None)
+        .next()
+        .await
+        .expect("proofs")?
         .total_amount()?)
 }

@@ -4,9 +4,9 @@ use anyhow::{anyhow, Result};
 use cdk::amount::SplitTarget;
 use cdk::mint_url::MintUrl;
 use cdk::nuts::nut00::ProofsMethods;
-use cdk::nuts::{CurrencyUnit, MintQuoteState, NotificationPayload, PaymentMethod};
-use cdk::wallet::{MultiMintWallet, WalletSubscription};
-use cdk::Amount;
+use cdk::nuts::{CurrencyUnit, PaymentMethod};
+use cdk::wallet::MultiMintWallet;
+use cdk::{Amount, StreamExt};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,9 @@ pub struct MintSubCommand {
     /// Expiry
     #[arg(short, long)]
     single_use: Option<bool>,
+    /// Wait duration in seconds for mint quote polling
+    #[arg(long, default_value = "30")]
+    wait_duration: u64,
 }
 
 pub async fn mint(
@@ -48,9 +51,9 @@ pub async fn mint(
 
     let wallet = get_or_create_wallet(multi_mint_wallet, &mint_url, unit).await?;
 
-    let mut payment_method = PaymentMethod::from_str(&sub_command_args.method)?;
+    let payment_method = PaymentMethod::from_str(&sub_command_args.method)?;
 
-    let quote_id = match &sub_command_args.quote_id {
+    let quote = match &sub_command_args.quote_id {
         None => match payment_method {
             PaymentMethod::Bolt11 => {
                 let amount = sub_command_args
@@ -62,20 +65,7 @@ pub async fn mint(
 
                 println!("Please pay: {}", quote.request);
 
-                let mut subscription = wallet
-                    .subscribe(WalletSubscription::Bolt11MintQuoteState(vec![quote
-                        .id
-                        .clone()]))
-                    .await;
-
-                while let Some(msg) = subscription.recv().await {
-                    if let NotificationPayload::MintQuoteBolt11Response(response) = msg {
-                        if response.state == MintQuoteState::Paid {
-                            break;
-                        }
-                    }
-                }
-                quote.id
+                quote
             }
             PaymentMethod::Bolt12 => {
                 let amount = sub_command_args.amount;
@@ -88,68 +78,37 @@ pub async fn mint(
 
                 println!("Please pay: {}", quote.request);
 
-                let mut subscription = wallet
-                    .subscribe(WalletSubscription::Bolt11MintQuoteState(vec![quote
-                        .id
-                        .clone()]))
-                    .await;
-
-                while let Some(msg) = subscription.recv().await {
-                    if let NotificationPayload::MintQuoteBolt11Response(response) = msg {
-                        if response.state == MintQuoteState::Paid {
-                            break;
-                        }
-                    }
-                }
-                quote.id
+                quote
             }
             _ => {
                 todo!()
             }
         },
-        Some(quote_id) => {
-            let quote = wallet
-                .localstore
-                .get_mint_quote(quote_id)
-                .await?
-                .ok_or(anyhow!("Unknown quote"))?;
-
-            payment_method = quote.payment_method;
-            quote_id.to_string()
-        }
+        Some(quote_id) => wallet
+            .localstore
+            .get_mint_quote(quote_id)
+            .await?
+            .ok_or(anyhow!("Unknown quote"))?,
     };
 
     tracing::debug!("Attempting mint for: {}", payment_method);
 
-    let proofs = match payment_method {
-        PaymentMethod::Bolt11 => wallet.mint(&quote_id, SplitTarget::default(), None).await?,
-        PaymentMethod::Bolt12 => {
-            let response = wallet.mint_bolt12_quote_state(&quote_id).await?;
+    let mut amount_minted = Amount::ZERO;
 
-            let amount_mintable = response.amount_paid - response.amount_issued;
+    let mut proof_streams = wallet.proof_stream(quote, SplitTarget::default(), None);
 
-            if amount_mintable == Amount::ZERO {
-                println!("Mint quote does not have amount that can be minted.");
-                return Ok(());
+    while let Some(proofs) = proof_streams.next().await {
+        let proofs = match proofs {
+            Ok(proofs) => proofs,
+            Err(err) => {
+                tracing::error!("Proof streams ended with {:?}", err);
+                break;
             }
+        };
+        amount_minted += proofs.total_amount()?;
+    }
 
-            wallet
-                .mint_bolt12(
-                    &quote_id,
-                    Some(amount_mintable),
-                    SplitTarget::default(),
-                    None,
-                )
-                .await?
-        }
-        _ => {
-            todo!()
-        }
-    };
-
-    let receive_amount = proofs.total_amount()?;
-
-    println!("Received {receive_amount} from mint {mint_url}");
+    println!("Received {amount_minted} from mint {mint_url}");
 
     Ok(())
 }

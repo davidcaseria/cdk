@@ -6,7 +6,7 @@ use std::sync::Arc;
 use cdk_common::database::{self, MintDatabase};
 use cdk_common::nut17::Notification;
 use cdk_common::pub_sub::OnNewSubscription;
-use cdk_common::NotificationPayload;
+use cdk_common::{MintQuoteBolt12Response, NotificationPayload, PaymentMethod};
 use uuid::Uuid;
 
 use crate::nuts::{MeltQuoteBolt11Response, MintQuoteBolt11Response, ProofState, PublicKey};
@@ -57,41 +57,62 @@ impl OnNewSubscription for OnSubscription {
             }
         }
 
-        to_return.extend(
-            futures::future::try_join_all(melt_queries)
-                .await
-                .map(|quotes| {
-                    quotes
-                        .into_iter()
-                        .filter_map(|quote| quote.map(|x| x.into()))
-                        .map(|x: MeltQuoteBolt11Response<Uuid>| x.into())
-                        .collect::<Vec<_>>()
-                })
-                .map_err(|e| e.to_string())?,
-        );
-        to_return.extend(
-            futures::future::try_join_all(mint_queries)
-                .await
-                .map(|quotes| {
-                    quotes
-                        .into_iter()
-                        .filter_map(|quote| quote.map(|x| x.into()))
-                        .map(|x: MintQuoteBolt11Response<Uuid>| x.into())
-                        .collect::<Vec<_>>()
-                })
-                .map_err(|e| e.to_string())?,
-        );
+        if !melt_queries.is_empty() {
+            to_return.extend(
+                futures::future::try_join_all(melt_queries)
+                    .await
+                    .map(|quotes| {
+                        quotes
+                            .into_iter()
+                            .filter_map(|quote| quote.map(|x| x.into()))
+                            .map(|x: MeltQuoteBolt11Response<Uuid>| x.into())
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|e| e.to_string())?,
+            );
+        }
 
-        to_return.extend(
-            datastore
-                .get_proofs_states(public_keys.as_slice())
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .enumerate()
-                .filter_map(|(idx, state)| state.map(|state| (public_keys[idx], state).into()))
-                .map(|state: ProofState| state.into()),
-        );
+        if !mint_queries.is_empty() {
+            to_return.extend(
+                futures::future::try_join_all(mint_queries)
+                    .await
+                    .map(|quotes| {
+                        quotes
+                            .into_iter()
+                            .filter_map(|quote| {
+                                quote.and_then(|x| match x.payment_method {
+                                    PaymentMethod::Bolt11 => {
+                                        let response: MintQuoteBolt11Response<Uuid> = x.into();
+                                        Some(response.into())
+                                    }
+                                    PaymentMethod::Bolt12 => match x.try_into() {
+                                        Ok(response) => {
+                                            let response: MintQuoteBolt12Response<Uuid> = response;
+                                            Some(response.into())
+                                        }
+                                        Err(_) => None,
+                                    },
+                                    PaymentMethod::Custom(_) => None,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+
+        if !public_keys.is_empty() {
+            to_return.extend(
+                datastore
+                    .get_proofs_states(public_keys.as_slice())
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(idx, state)| state.map(|state| (public_keys[idx], state).into()))
+                    .map(|state: ProofState| state.into()),
+            );
+        }
 
         Ok(to_return)
     }

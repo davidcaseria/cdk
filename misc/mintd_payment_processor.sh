@@ -123,11 +123,12 @@ export CDK_PAYMENT_PROCESSOR_LISTEN_PORT="8090";
 
 echo "$CDK_PAYMENT_PROCESSOR_CLN_RPC_PATH"
 
+cargo b --bin cdk-payment-processor
+
 cargo run --bin cdk-payment-processor &
 
 CDK_PAYMENT_PROCESSOR_PID=$!
 
-sleep 10;
 
 export CDK_MINTD_URL="http://$CDK_ITESTS_MINT_ADDR:$CDK_ITESTS_MINT_PORT_0";
 export CDK_MINTD_WORK_DIR="$CDK_ITESTS_DIR";
@@ -139,6 +140,8 @@ export CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT="8090";
 export CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS="sat";
 export CDK_MINTD_MNEMONIC="eye survey guilt napkin crystal cup whisper salt luggage manage unveil loyal";
  
+cargo build --bin cdk-mintd --no-default-features --features grpc-processor
+
 cargo run --bin cdk-mintd --no-default-features --features grpc-processor &
 CDK_MINTD_PID=$!
 

@@ -26,8 +26,9 @@ use cdk::nuts::{
 };
 use cdk::wallet::types::TransactionDirection;
 use cdk::wallet::{HttpClient, MintConnector, Wallet};
+use cdk::StreamExt;
 use cdk_fake_wallet::{create_fake_invoice, FakeInvoiceDescription};
-use cdk_integration_tests::{attempt_to_swap_pending, wait_for_mint_to_be_paid};
+use cdk_integration_tests::attempt_to_swap_pending;
 use cdk_sqlite::wallet::memory;
 
 const MINT_URL: &str = "http://127.0.0.1:8086";
@@ -46,14 +47,13 @@ async fn test_fake_tokens_pending() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Pending,
@@ -88,14 +88,13 @@ async fn test_fake_melt_payment_fail() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Unknown,
@@ -153,14 +152,13 @@ async fn test_fake_melt_payment_fail_and_check() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Unknown,
@@ -201,14 +199,13 @@ async fn test_fake_melt_payment_return_fail_status() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Failed,
@@ -264,14 +261,13 @@ async fn test_fake_melt_payment_error_unknown() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Failed,
@@ -327,14 +323,13 @@ async fn test_fake_melt_payment_err_paid() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let fake_description = FakeInvoiceDescription {
         pay_invoice_state: MeltQuoteState::Failed,
@@ -368,14 +363,13 @@ async fn test_fake_melt_change_in_quote() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let _mint_amount = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let _proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let transaction = wallet
         .list_transactions(Some(TransactionDirection::Incoming))
@@ -437,14 +431,13 @@ async fn test_fake_mint_with_witness() {
     .expect("failed to create new wallet");
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::default(), None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let mint_amount = proofs.total_amount().unwrap();
 
@@ -465,9 +458,13 @@ async fn test_fake_mint_without_witness() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
+    let mut payment_streams = wallet.payment_stream(&mint_quote);
+
+    payment_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let http_client = HttpClient::new(MINT_URL.parse().unwrap(), None);
 
@@ -505,9 +502,13 @@ async fn test_fake_mint_with_wrong_witness() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
+    let mut payment_streams = wallet.payment_stream(&mint_quote);
+
+    payment_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let http_client = HttpClient::new(MINT_URL.parse().unwrap(), None);
 
@@ -551,9 +552,13 @@ async fn test_fake_mint_inflated() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
+    let mut payment_streams = wallet.payment_stream(&mint_quote);
+
+    payment_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
@@ -609,9 +614,13 @@ async fn test_fake_mint_multiple_units() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
+    let mut payment_streams = wallet.payment_stream(&mint_quote);
+
+    payment_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
@@ -684,16 +693,17 @@ async fn test_fake_mint_multiple_unit_swap() {
     )
     .expect("failed to create new wallet");
 
+    wallet.refresh_keysets().await.unwrap();
+
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let wallet_usd = Wallet::new(
         MINT_URL,
@@ -703,17 +713,18 @@ async fn test_fake_mint_multiple_unit_swap() {
         None,
     )
     .expect("failed to create usd wallet");
+    wallet_usd.refresh_keysets().await.unwrap();
 
     let mint_quote = wallet_usd.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet_usd, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams =
+        wallet_usd.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let usd_proofs = wallet_usd
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let usd_proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
@@ -799,14 +810,13 @@ async fn test_fake_mint_multiple_unit_melt() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     println!("Minted sat");
 
@@ -822,14 +832,14 @@ async fn test_fake_mint_multiple_unit_melt() {
     let mint_quote = wallet_usd.mint_quote(100.into(), None).await.unwrap();
     println!("Minted quote usd");
 
-    wait_for_mint_to_be_paid(&wallet_usd, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams =
+        wallet_usd.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let usd_proofs = wallet_usd
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let usd_proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     {
         let inputs: Proofs = vec![
@@ -917,14 +927,13 @@ async fn test_fake_mint_input_output_mismatch() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let wallet_usd = Wallet::new(
         MINT_URL,
@@ -975,14 +984,14 @@ async fn test_fake_mint_swap_inflated() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
+
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
     let pre_mint =
         PreMintSecrets::random(active_keyset_id, 101.into(), &SplitTarget::None).unwrap();
@@ -1019,14 +1028,14 @@ async fn test_fake_mint_swap_spend_after_fail() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
+
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
     let pre_mint =
@@ -1090,14 +1099,14 @@ async fn test_fake_mint_melt_spend_after_fail() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
+
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
     let pre_mint =
@@ -1162,14 +1171,13 @@ async fn test_fake_mint_duplicate_proofs_swap() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let active_keyset_id = wallet.fetch_active_keyset().await.unwrap().id;
 
@@ -1204,6 +1212,7 @@ async fn test_fake_mint_duplicate_proofs_swap() {
 
     let blinded_message = pre_mint.blinded_messages();
 
+    let inputs = vec![proofs[0].clone()];
     let outputs = vec![blinded_message[0].clone(), blinded_message[0].clone()];
 
     let swap_request = SwapRequest::new(inputs, outputs);
@@ -1241,14 +1250,13 @@ async fn test_fake_mint_duplicate_proofs_melt() {
 
     let mint_quote = wallet.mint_quote(100.into(), None).await.unwrap();
 
-    wait_for_mint_to_be_paid(&wallet, &mint_quote.id, 60)
-        .await
-        .unwrap();
+    let mut proof_streams = wallet.proof_stream(mint_quote.clone(), SplitTarget::default(), None);
 
-    let proofs = wallet
-        .mint(&mint_quote.id, SplitTarget::None, None)
+    let proofs = proof_streams
+        .next()
         .await
-        .unwrap();
+        .expect("payment")
+        .expect("no error");
 
     let inputs = vec![proofs[0].clone(), proofs[0].clone()];
 
